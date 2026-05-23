@@ -27,12 +27,106 @@ function ex(name, sets, reps, opts = {}) {
   };
 }
 
+/* ── 3-month demo seeder ── */
+function buildDemoData() {
+  const PUSH_EXERCISES = [
+    { name: "Bench Press", baseWeight: 80 },
+    { name: "Incline Dumbbell Press", baseWeight: 28 },
+    { name: "Overhead Press", baseWeight: 50 },
+    { name: "Cable Fly", baseWeight: 14 },
+    { name: "Tricep Pushdown", baseWeight: 22 },
+    { name: "Lateral Raise", baseWeight: 10 },
+  ];
+  const PULL_EXERCISES = [
+    { name: "Barbell Row", baseWeight: 70 },
+    { name: "Pull-ups", baseWeight: 0 },
+    { name: "Lat Pulldown", baseWeight: 55 },
+    { name: "Cable Row", baseWeight: 60 },
+    { name: "Dumbbell Curl", baseWeight: 16 },
+    { name: "Face Pull", baseWeight: 18 },
+  ];
+  const LEGS_EXERCISES = [
+    { name: "Back Squat", baseWeight: 100 },
+    { name: "Romanian Deadlift", baseWeight: 80 },
+    { name: "Leg Press", baseWeight: 140 },
+    { name: "Bulgarian Split Squat", baseWeight: 30 },
+    { name: "Leg Curl", baseWeight: 45 },
+    { name: "Calf Raise", baseWeight: 60 },
+  ];
+  const FULL_EXERCISES = [
+    { name: "Trap Bar Deadlift", baseWeight: 110 },
+    { name: "Dumbbell Lunges", baseWeight: 22 },
+    { name: "Box Jump", baseWeight: 0 },
+    { name: "Farmers Carry", baseWeight: 32 },
+    { name: "Plank", baseWeight: 0 },
+    { name: "Ab Wheel Rollout", baseWeight: 0 },
+  ];
+
+  const DAY_TEMPLATES = [
+    { label: "Push", pool: PUSH_EXERCISES },
+    { label: "Pull", pool: PULL_EXERCISES },
+    { label: "Legs", pool: LEGS_EXERCISES },
+    { label: "Full Body", pool: FULL_EXERCISES },
+  ];
+
+  const days = DAY_TEMPLATES.map(tmpl => {
+    const shuffled = [...tmpl.pool].sort(() => Math.random() - 0.5).slice(0, 5);
+    return {
+      id: makeId(),
+      label: tmpl.label,
+      exercises: shuffled.map(e => ({
+        id: makeId(), name: e.name,
+        sets: "4", reps: "8",
+        weight: e.baseWeight > 0 ? String(e.baseWeight) : "",
+        unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "",
+        useTempo: false, tempo: "", note: "", supersetId: null, last: null
+      }))
+    };
+  });
+
+  const program = { name: "APEX Demo", days };
+  const logs = [];
+  const now = new Date();
+  const WEEKS = 13;
+  const weekOffsets = [1, 2, 4, 6];
+
+  for (let week = 0; week < WEEKS; week++) {
+    const progress = week / (WEEKS - 1);
+    weekOffsets.forEach((dayOffset, sessionIdx) => {
+      const sessionDate = new Date(now);
+      sessionDate.setDate(sessionDate.getDate() - (WEEKS - 1 - week) * 7 + dayOffset - 6);
+      if (sessionDate > now) return;
+      const dateStr = sessionDate.toISOString().slice(0, 10);
+      const day = days[sessionIdx % days.length];
+
+      const exercises = day.exercises.map(e => {
+        const base = parseFloat(e.weight) || 0;
+        const gain = base > 0 ? base * 0.12 * progress + (Math.random() - 0.4) * (base * 0.02) : 0;
+        const weight = base > 0 ? Math.round((base + gain) * 2) / 2 : 0;
+        const reps = 8 + Math.floor(progress * 3) + (Math.random() > 0.7 ? 1 : 0);
+        const sets = 4;
+        const loggedSets = Array.from({ length: sets }, (_, si) => ({
+          reps: String(reps - (si === sets - 1 && Math.random() > 0.6 ? 1 : 0)),
+          weight: weight > 0 ? String(weight) : "",
+          unit: "kg",
+          done: true
+        }));
+        return {
+          name: e.name, sets: String(sets), reps: String(reps),
+          weight: weight > 0 ? String(weight) : "", unit: "kg",
+          rir: "", intensity: "", tempo: "", note: "", loggedSets
+        };
+      });
+
+      logs.push({ id: uid(), date: dateStr, dayId: day.id, dayLabel: day.label, exercises });
+    });
+  }
+
+  return { program, logs, lastLogged: {} };
+}
+
 function defaultData() {
-  return {
-    program: { name: "My Program", days: [] },
-    logs: [],
-    lastLogged: {}
-  };
+  return buildDemoData();
 }
 
 function loadData() {
@@ -43,6 +137,9 @@ function loadData() {
       if (!p.lastLogged) p.lastLogged = {};
       if (!p.logs) p.logs = [];
       if (!p.program) p.program = { name: "My Program", days: [] };
+      if (p.logs.length === 0 && p.program.days.length === 0) {
+        return buildDemoData();
+      }
       return p;
     }
   } catch {}
@@ -1116,12 +1213,38 @@ function monthKey(dateStr) { return dateStr.slice(0, 7); }
 /* ════════════════════════════════
    PROGRESS PAGE
 ════════════════════════════════ */
+/* ── Muscle group keyword classifier ── */
+const MUSCLE_GROUPS = [
+  { key: "chest",     label: "Chest",     keywords: ["chest","fly","push-up","pushup","pec","bench press","incline press","flat press","cable fly","bench"] },
+  { key: "back",      label: "Back",      keywords: ["row","pull","lat","t-bar","pulldown","chin","deadlift","rdl","back"] },
+  { key: "shoulders", label: "Shoulders", keywords: ["shoulder","delt","lateral raise","shrug","overhead press","ohp","face pull","reverse fly","press"] },
+  { key: "arms",      label: "Arms",      keywords: ["curl","tricep","bicep","hammer","wrist","pushdown","tricep extension","dip","tricep push"] },
+  { key: "legs",      label: "Legs",      keywords: ["squat","lunge","leg press","split squat","step-up","jump","hip thrust","glute","calf","bulgarian","box squat","broad jump","depth drop","trap bar","plyo","sprint","sled","prowler","shuttle","speed","vertical","rdl","deadlift","leg curl","leg raise"] },
+  { key: "core",      label: "Core",      keywords: ["plank","sit-up","crunch","pallof","flutter","wave","farmer","med ball","slam","hanging leg","ab","core","toes to bar","rollout","carry"] },
+];
+
+const CLASSIFY_CACHE_KEY = "apex-muscle-cache-v1";
+function loadClassifyCache() { try { const r = localStorage.getItem(CLASSIFY_CACHE_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; } }
+function saveClassifyCache(c) { try { localStorage.setItem(CLASSIFY_CACHE_KEY, JSON.stringify(c)); } catch {} }
+
+function keywordClassify(name) {
+  const n = name.toLowerCase();
+  for (const g of MUSCLE_GROUPS) {
+    if (g.keywords.some(k => n.includes(k))) return g.key;
+  }
+  return null;
+}
+
 function ProgressPage({ logs, program, onBack }) {
   const [tab, setTab] = useState("dashboard");
+  const [muscleTab, setMuscleTab] = useState("all");
   const [filterDayId, setFilterDayId] = useState(null);
   const [dayDropOpen, setDayDropOpen] = useState(false);
   const [exPage, setExPage] = useState(0);
+  const [overrides, setOverrides] = useState(loadClassifyCache);
+  const [overrideTarget, setOverrideTarget] = useState(null);
   const PAGE_SIZE = 5;
+
   const hasWeekOfData = (() => {
     if (logs.length < 2) return false;
     const oldest = logs.reduce((a, b) => a.date < b.date ? a : b);
@@ -1140,10 +1263,19 @@ function ProgressPage({ logs, program, onBack }) {
     ? activeDay.exercises
     : [...new Set(logs.flatMap(l => l.exercises.map(e => e.name)))];
 
-  useEffect(() => { setExPage(0); }, [filterDayId]);
+  function getGroup(name) {
+    return overrides[name] || keywordClassify(name) || "other";
+  }
 
-    const totalExPages = Math.ceil(allExercises.length / PAGE_SIZE);
-  const chartExercises = allExercises.slice(exPage * PAGE_SIZE, exPage * PAGE_SIZE + PAGE_SIZE);
+  // Reset page when filters change
+  useEffect(() => { setExPage(0); }, [muscleTab, filterDayId]);
+
+  const presentGroups = MUSCLE_GROUPS.filter(g => allExercises.some(n => getGroup(n) === g.key));
+  const muscleFilteredExercises = muscleTab === "all"
+    ? allExercises
+    : allExercises.filter(n => getGroup(n) === muscleTab);
+  const totalExPages = Math.ceil(muscleFilteredExercises.length / PAGE_SIZE);
+  const chartExercises = muscleFilteredExercises.slice(exPage * PAGE_SIZE, exPage * PAGE_SIZE + PAGE_SIZE);
 
   const WEEKS8 = lastNWeeks(8);
   const MONTHS12 = Array.from({ length: 12 }, (_, i) => {
@@ -1197,6 +1329,15 @@ function ProgressPage({ logs, program, onBack }) {
   const maxHeat = Math.max(...heatmap.map(h => h.count), 1);
   const selectedDayLabel = filterDayId ? dayOptions.find(d => d.id === filterDayId)?.label : null;
 
+  function applyOverride(name, groupKey) {
+    setOverrides(prev => {
+      const next = { ...prev, [name]: groupKey };
+      saveClassifyCache(next);
+      return next;
+    });
+    setOverrideTarget(null);
+  }
+
   return (
     <div style={s.root}>
       <div style={s.header}>
@@ -1206,14 +1347,61 @@ function ProgressPage({ logs, program, onBack }) {
       </div>
 
       <div style={s.subTabBar}>
-        {[["dashboard", "Dashboard"], ["history", "History"]].map(([t, label]) => (
+        {[["dashboard", "Dashboard"], ["history", "History"], ["exercises", "Exercises"]].map(([t, label]) => (
           <button key={t} style={{ ...s.subTab, ...(tab === t ? s.subTabActive : {}) }} onClick={() => setTab(t)}>{label}</button>
         ))}
       </div>
 
       <div style={{ ...s.scroll, padding: "12px 14px" }}>
+
+        {/* ── EXERCISES TAB ── */}
+        {tab === "exercises" && (
+          <div>
+            <div style={ds.classifyHeader}>
+              <div style={ds.classifyTitle}>Exercise Classification</div>
+              <div style={ds.classifySub}>Tap Change to reassign any exercise to a different group</div>
+            </div>
+            {MUSCLE_GROUPS.map((g, gi) => {
+              const exList = allExercises.filter(n => getGroup(n) === g.key);
+              if (!exList.length) return null;
+              return (
+                <div key={g.key} style={ds.classifySection}>
+                  <div style={ds.classifySectionLabel}>
+                    <span style={{ ...ds.classifyGroupDot, background: EX_COLORS[gi % EX_COLORS.length] }} />
+                    {g.label}
+                    <span style={ds.classifyGroupCount}>{exList.length}</span>
+                  </div>
+                  {exList.map(name => (
+                    <div key={name} style={ds.classifyRow}>
+                      <span style={ds.classifyExName}>{name}</span>
+                      <button style={ds.classifyChangeBtn} onClick={() => setOverrideTarget(name)}>Change</button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {allExercises.filter(n => getGroup(n) === "other").length > 0 && (
+              <div style={ds.classifySection}>
+                <div style={ds.classifySectionLabel}>
+                  <span style={{ ...ds.classifyGroupDot, background: "#555" }} />
+                  Unclassified
+                  <span style={ds.classifyGroupCount}>{allExercises.filter(n => getGroup(n) === "other").length}</span>
+                </div>
+                {allExercises.filter(n => getGroup(n) === "other").map(name => (
+                  <div key={name} style={ds.classifyRow}>
+                    <span style={ds.classifyExName}>{name}</span>
+                    <button style={ds.classifyChangeBtn} onClick={() => setOverrideTarget(name)}>Assign</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── HISTORY TAB ── */}
         {tab === "history" && <HistoryTab logs={logs} />}
 
+        {/* ── DASHBOARD TAB ── */}
         {tab === "dashboard" && !hasWeekOfData && (
           <div style={ds.notReady}>
             <div style={ds.notReadyIcon}>🗓️</div>
@@ -1224,6 +1412,7 @@ function ProgressPage({ logs, program, onBack }) {
 
         {tab === "dashboard" && hasWeekOfData && (
           <>
+            {/* Day filter */}
             {dayOptions.length > 0 && (
               <div style={ds.exFilterWrap}>
                 <button style={ds.exFilterBtn} onClick={() => setDayDropOpen(v => !v)}>
@@ -1242,14 +1431,14 @@ function ProgressPage({ logs, program, onBack }) {
                 {dayDropOpen && (
                   <div style={ds.exDropdown}>
                     <button style={{ ...ds.dayDropItem, ...(filterDayId === null ? ds.exDropItemActive : {}) }}
-                      onClick={() => { setFilterDayId(null); setDayDropOpen(false); }}>
+                      onClick={() => { setFilterDayId(null); setMuscleTab("all"); setDayDropOpen(false); }}>
                       <div style={ds.dayDropLeft}><div style={ds.dayDropLabel}>All Days</div><div style={ds.dayDropSub}>{allExercises.length} total exercises</div></div>
                       {filterDayId === null && <span style={{ color: RED }}>✓</span>}
                     </button>
                     <div style={{ height: 1, background: BORDER }} />
                     {dayOptions.map((d, i) => (
                       <button key={d.id} style={{ ...ds.dayDropItem, ...(filterDayId === d.id ? ds.exDropItemActive : {}) }}
-                        onClick={() => { setFilterDayId(d.id); setDayDropOpen(false); }}>
+                        onClick={() => { setFilterDayId(d.id); setMuscleTab("all"); setDayDropOpen(false); }}>
                         <div style={ds.dayDropLeft}>
                           <div style={ds.dayDropLabel}><span style={{ ...ds.dayDropDot, background: EX_COLORS[i % EX_COLORS.length] }} />{d.label}</div>
                           <div style={ds.dayDropSub}>{d.exercises.length} exercises</div>
@@ -1262,18 +1451,46 @@ function ProgressPage({ logs, program, onBack }) {
               </div>
             )}
 
+            {/* Muscle group tabs with count badges */}
+            {presentGroups.length > 0 && (
+              <div style={ds.muscleTabBar}>
+                <button
+                  style={{ ...ds.muscleTab, ...(muscleTab === "all" ? ds.muscleTabActive : {}) }}
+                  onClick={() => setMuscleTab("all")}>
+                  All <span style={{ ...ds.muscleTabCount, ...(muscleTab === "all" ? ds.muscleTabCountActive : {}) }}>{allExercises.length}</span>
+                </button>
+                {presentGroups.map((g, i) => {
+                  const count = allExercises.filter(n => getGroup(n) === g.key).length;
+                  const isActive = muscleTab === g.key;
+                  return (
+                    <button key={g.key}
+                      style={{ ...ds.muscleTab, ...(isActive ? ds.muscleTabActive : {}) }}
+                      onClick={() => setMuscleTab(g.key)}>
+                      {g.label} <span style={{ ...ds.muscleTabCount, ...(isActive ? ds.muscleTabCountActive : {}) }}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+
             {chartExercises.length === 0 && (
-              <div style={{ ...ds.chartEmpty, padding: "32px 0", fontSize: 13 }}>
-                No exercises found.{" "}
-                <button style={ds.classifyLink} onClick={() => setTab("classify")}>Assign manually →</button>
+              <div style={{ ...ds.chartEmptyState, padding: "32px 0" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>🏷️</div>
+                <div style={{ fontSize: 13, color: DIM }}>No {MUSCLE_GROUPS.find(g => g.key === muscleTab)?.label.toLowerCase()} exercises found</div>
+                <button style={{ ...ds.classifyLink, fontSize: 12, marginTop: 6, display: "block" }} onClick={() => setTab("exercises")}>Assign exercises manually →</button>
               </div>
             )}
 
             {chartExercises.length > 0 && (
               <>
-                {allExercises.length > PAGE_SIZE && (
+                {/* Pagination — top */}
+                {muscleFilteredExercises.length > PAGE_SIZE && (
                   <div style={ds.pageRow}>
-                    <span style={ds.pageInfo}>Exercises {exPage * PAGE_SIZE + 1}–{Math.min((exPage + 1) * PAGE_SIZE, allExercises.length)} of {allExercises.length}</span>
+                    <span style={ds.pageInfo}>
+                      {muscleTab !== "all" && <span style={{ color: RED, fontWeight: 700, marginRight: 4 }}>{MUSCLE_GROUPS.find(g => g.key === muscleTab)?.label} · </span>}
+                      {exPage * PAGE_SIZE + 1}–{Math.min((exPage + 1) * PAGE_SIZE, muscleFilteredExercises.length)} of {muscleFilteredExercises.length}
+                    </span>
                     <div style={ds.pageBtns}>
                       <button style={{ ...ds.pageBtn, opacity: exPage === 0 ? 0.3 : 1 }} onClick={() => setExPage(p => Math.max(0, p - 1))} disabled={exPage === 0}>‹ Prev</button>
                       <button style={{ ...ds.pageBtn, opacity: exPage >= totalExPages - 1 ? 0.3 : 1 }} onClick={() => setExPage(p => Math.min(totalExPages - 1, p + 1))} disabled={exPage >= totalExPages - 1}>Next ›</button>
@@ -1281,6 +1498,7 @@ function ProgressPage({ logs, program, onBack }) {
                   </div>
                 )}
 
+                {/* PRs */}
                 <SectionHeader title="Current PRs" subtitle="vs 8 weeks ago" />
                 <div style={ds.prGrid}>
                   {prCards.map(card => (
@@ -1301,28 +1519,27 @@ function ProgressPage({ logs, program, onBack }) {
                   )}
                 </div>
 
+                {/* 1RM chart */}
                 <SectionHeader title="1RM Strength Progression" subtitle="8 weeks" />
                 <div style={ds.chartCard}>
-                  {oneRMByExercise.every(ex => ex.data.every(v => v == null))
-                    ? (
-                      <div style={ds.chartEmptyState}>
-                        <div style={{ fontSize: 28, marginBottom: 8 }}>⚖️</div>
-                        <div style={{ fontSize: 13, color: DIM }}>No weight data yet</div>
-                        <div style={{ fontSize: 11, color: "#444", marginTop: 4 }}>Log sets with weight to see your 1RM trend</div>
+                  {oneRMByExercise.every(ex => ex.data.every(v => v == null)) ? (
+                    <div style={ds.chartEmptyState}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>⚖️</div>
+                      <div style={{ fontSize: 13, color: DIM }}>No weight data yet</div>
+                      <div style={{ fontSize: 11, color: "#444", marginTop: 4 }}>Log sets with weight to see your 1RM trend</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div role="img" aria-label="1RM strength progression over 8 weeks">
+                        <OneRMLineChart data={oneRMByExercise} weeks={weekLabels} colors={EX_COLORS} />
                       </div>
-                    )
-                    : (
-                      <>
-                        {/* FIX: ARIA label on SVG chart */}
-                        <div role="img" aria-label="1RM strength progression over 8 weeks">
-                          <OneRMLineChart data={oneRMByExercise} weeks={weekLabels} colors={EX_COLORS} />
-                        </div>
-                        <ChartLegend items={chartExercises.map((n, i) => ({ name: n, color: EX_COLORS[i % EX_COLORS.length] }))} />
-                      </>
-                    )}
+                      <ChartLegend items={chartExercises.map((n, i) => ({ name: n, color: EX_COLORS[i % EX_COLORS.length] }))} />
+                    </>
+                  )}
                 </div>
 
-                {exPage === 0 && (
+                {/* Volume (only on page 0, all-muscle view) */}
+                {exPage === 0 && muscleTab === "all" && (
                   <>
                     <SectionHeader title="Weekly Training Volume" subtitle={selectedDayLabel ? `${selectedDayLabel} · 8 weeks` : "All days · 8 weeks"} />
                     <div style={ds.chartCard}>
@@ -1333,23 +1550,23 @@ function ProgressPage({ logs, program, onBack }) {
                   </>
                 )}
 
+                {/* Relative strength gain */}
                 <SectionHeader title="Relative Strength Gain" subtitle="% vs first week" />
                 <div style={ds.chartCard}>
-                  {relGains.every(g => g.pct === 0)
-                    ? (
-                      <div style={ds.chartEmptyState}>
-                        <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
-                        <div style={{ fontSize: 13, color: DIM }}>Log more sessions to see trends</div>
-                      </div>
-                    )
-                    : (
-                      <div role="img" aria-label="Relative strength gain percentage chart">
-                        <RelGainChart data={relGains} colors={EX_COLORS} />
-                      </div>
-                    )}
+                  {relGains.every(g => g.pct === 0) ? (
+                    <div style={ds.chartEmptyState}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+                      <div style={{ fontSize: 13, color: DIM }}>Log more sessions to see trends</div>
+                    </div>
+                  ) : (
+                    <div role="img" aria-label="Relative strength gain percentage chart">
+                      <RelGainChart data={relGains} colors={EX_COLORS} />
+                    </div>
+                  )}
                 </div>
 
-                {allExercises.length > PAGE_SIZE && (
+                {/* Pagination — bottom */}
+                {muscleFilteredExercises.length > PAGE_SIZE && (
                   <div style={{ ...ds.pageRow, marginTop: 4 }}>
                     <span style={ds.pageInfo}>{exPage + 1} / {totalExPages}</span>
                     <div style={ds.pageBtns}>
@@ -1361,6 +1578,7 @@ function ProgressPage({ logs, program, onBack }) {
               </>
             )}
 
+            {/* Consistency heatmap always visible */}
             <SectionHeader title="Training Consistency" subtitle="Sessions per month · 12 months" />
             <div style={ds.chartCard}>
               <div role="img" aria-label="Training consistency heatmap by month">
@@ -1371,6 +1589,27 @@ function ProgressPage({ logs, program, onBack }) {
           </>
         )}
       </div>
+
+      {/* Muscle group override modal */}
+      {overrideTarget && (
+        <div style={ds.modalOverlay} role="dialog" aria-modal="true" aria-label="Assign muscle group">
+          <div style={ds.modal}>
+            <div style={ds.modalTitle}>Assign Muscle Group</div>
+            <div style={ds.modalEx}>"{overrideTarget}"</div>
+            <div style={ds.modalBtns}>
+              {MUSCLE_GROUPS.map((g, i) => (
+                <button key={g.key} style={ds.modalBtn} onClick={() => applyOverride(overrideTarget, g.key)}>
+                  <span style={{ ...ds.modalBtnDot, background: EX_COLORS[i % EX_COLORS.length] }} />{g.label}
+                </button>
+              ))}
+              <button style={ds.modalBtn} onClick={() => applyOverride(overrideTarget, "other")}>
+                <span style={{ ...ds.modalBtnDot, background: "#555" }} />Other / Unclassified
+              </button>
+            </div>
+            <button style={ds.modalCancel} onClick={() => setOverrideTarget(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1674,6 +1913,36 @@ const ds = {
   pageInfo: { fontSize: 11, color: DIM },
   pageBtns: { display: "flex", gap: 6 },
   pageBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit" },
+
+  // Muscle group tabs
+  muscleTabBar: { display: "flex", overflowX: "auto", gap: 6, marginBottom: 14, scrollbarWidth: "none", paddingBottom: 2 },
+  muscleTab: { background: SURFACE, border: `1px solid ${BORDER}`, color: DIM, fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 20, cursor: "pointer", flexShrink: 0, fontFamily: "inherit", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 },
+  muscleTabActive: { background: RED, border: `1px solid ${RED}`, color: "#fff" },
+  muscleTabCount: { fontSize: 10, background: "rgba(0,0,0,0.2)", borderRadius: 10, padding: "1px 6px", fontWeight: 700 },
+  muscleTabCountActive: { background: "rgba(255,255,255,0.25)" },
+  classifyLink: { background: "none", border: "none", color: RED, fontSize: 13, cursor: "pointer", padding: 0, fontFamily: "inherit", textDecoration: "underline" },
+
+  // Exercises tab
+  classifyHeader: { marginBottom: 16 },
+  classifyTitle: { fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 },
+  classifySub: { fontSize: 12, color: DIM, lineHeight: 1.5 },
+  classifySection: { marginBottom: 20 },
+  classifySectionLabel: { fontSize: 11, color: TEXT, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 },
+  classifyGroupDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0, display: "inline-block" },
+  classifyGroupCount: { fontSize: 10, background: SURFACE, border: `1px solid ${BORDER}`, color: DIM, borderRadius: 10, padding: "1px 7px", fontWeight: 700 },
+  classifyRow: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${BORDER}` },
+  classifyExName: { fontSize: 13, color: TEXT, flex: 1 },
+  classifyChangeBtn: { background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 },
+
+  // Override modal
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" },
+  modal: { background: "#1e1e20", borderRadius: "18px 18px 0 0", padding: "24px 20px 36px", width: "100%", maxWidth: 430 },
+  modalTitle: { fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 6, textAlign: "center" },
+  modalEx: { fontSize: 13, color: DIM, marginBottom: 18, textAlign: "center", fontStyle: "italic" },
+  modalBtns: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 },
+  modalBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 14, fontWeight: 500, padding: "12px 16px", borderRadius: 10, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, fontFamily: "inherit" },
+  modalBtnDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
+  modalCancel: { width: "100%", background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 14, padding: "12px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit" },
 };
 
 function formatDate(iso) {
