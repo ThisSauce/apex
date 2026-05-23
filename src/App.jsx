@@ -693,7 +693,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
             onImportDays(days);
             setShowPaste(false);
             setActiveIdx(program.days.length); // jump to first new day
-            showToast(\`Imported \${days.length} day\${days.length !== 1 ? "s" : ""}! 💪\`, "success");
+            showToast(`Imported ${days.length} day${days.length !== 1 ? "s" : ""}! 💪`, "success");
           }}
         />
       )}
