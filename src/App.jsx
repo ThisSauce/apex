@@ -11,13 +11,9 @@ const DIM = "#8e8e93";
 const BADGE_BG = "#3d1a1a";
 
 /* ─── Constants ─── */
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
-const AI_CLASSIFY_TIMEOUT_MS = 5000;
-const CLASSIFY_CACHE_KEY = "ironweek-muscle-cache-v2"; // versioned cache key
 const SK = "ironweek-v6";
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
-
 
 function makeId() { return Math.random().toString(36).slice(2, 9); }
 
@@ -125,6 +121,7 @@ export default function App() {
   const [data, setData] = useState(loadData);
   const [page, setPage] = useState("home");
   const [activeDayId, setActiveDayId] = useState(null);
+
   const { toast, show: showToast } = useToast();
 
   useEffect(() => { saveData(data); }, [data]);
@@ -252,13 +249,6 @@ export default function App() {
     }));
   }
 
-  function importDays(newDays) {
-    updateProgram(prog => ({
-      ...prog,
-      days: [...prog.days, ...newDays]
-    }));
-  }
-
   function logWorkout(dayId) {
     const day = program.days.find(d => d.id === dayId);
     if (!day) return;
@@ -297,7 +287,6 @@ export default function App() {
           onRenameDay={renameDayLabel}
           onReorder={reorderExercisesInDay}
           onAddToSuperset={addExerciseToSuperset}
-          onImportDays={importDays}
           showToast={showToast}
         />
         <Toast toast={toast} />
@@ -434,7 +423,7 @@ function HomePage({ program, onProgram, onExercise, onProgress }) {
    PROGRAM PAGE
 ════════════════════════════════ */
 function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateExercise,
-  onDeleteExercise, onToggleSuperset, onRenameDay, onReorder, onAddToSuperset, onImportDays, showToast }) {
+  onDeleteExercise, onToggleSuperset, onRenameDay, onReorder, onAddToSuperset, showToast }) {
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [showForm, setShowForm] = useState(false);
@@ -448,7 +437,6 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const [recentlyReordered, setRecentlyReordered] = useState(null);
-  const [showPaste, setShowPaste] = useState(false);
   const scrollRef = useRef(null);
 
   const days = program.days;
@@ -529,10 +517,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
       </div>
 
       <div style={s.progSection}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <div style={s.progSectionLabel}>Days per week</div>
-          <button style={pp.pasteBtn} onClick={() => setShowPaste(true)}>Paste Workout</button>
-        </div>
+        <div style={s.progSectionLabel}>Days per week</div>
         <div style={s.dayCountRow}>
           {DAY_OPTIONS.map(n => (
             <button key={n}
@@ -685,11 +670,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
           </div>
         </>
       )}
-      {showPaste && (
-        <PasteImportModal
-          onClose={() => setShowPaste(false)}
           onImport={(days) => {
-            onImportDays(days);
             setShowPaste(false);
             setActiveIdx(program.days.length); // jump to first new day
             showToast(`Imported ${days.length} day${days.length !== 1 ? "s" : ""}! 💪`, "success");
@@ -759,263 +740,6 @@ const pr = {
   addToSsPlus: { width: 18, height: 18, borderRadius: "50%", background: RED, color: "#fff", fontSize: 13, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
   addToSsBanner: { fontSize: 11, color: RED, marginBottom: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 },
   addToSsClear: { background: "none", border: "none", color: DIM, fontSize: 11, cursor: "pointer", padding: 0, fontFamily: "inherit" },
-};
-
-
-/* ════════════════════════════════
-   PASTE IMPORT MODAL
-════════════════════════════════ */
-async function parseWorkoutWithAI(text) {
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1000,
-      system: `You are a fitness app parser. Convert workout text into structured JSON.
-Output ONLY a valid JSON array of day objects. No markdown, no explanation.
-Schema:
-[
-  {
-    "label": "Upper — Day 1",
-    "exercises": [
-      {
-        "name": "Exercise Name",
-        "sets": "3",
-        "reps": "10",
-        "supersetId": "ss1",
-        "note": "optional note",
-        "intensity": "",
-        "tempo": ""
-      }
-    ]
-  }
-]
-Rules:
-- Group exercises in the same superset with the same supersetId string (e.g. "ss1", "ss2"). Standalone exercises get a unique supersetId like their own name slugified.
-- Parse reps ranges like "8-10" or "8–10" as-is.
-- "Failure" reps stays as "Failure".
-- Extract tempo like "3-0-1" into the tempo field.
-- Extract intensity like "80-85%" into the intensity field.
-- Put substitutes, notes (e.g. "hold top 2sec", "each arm") in the note field.
-- Keep day labels descriptive (e.g. "Upper — Day 1", "Lower — Day 2").
-- Output ONLY the JSON array.`,
-      messages: [{ role: "user", content: text }]
-    })
-  });
-  const data = await resp.json();
-  const raw = data.content?.find(b => b.type === "text")?.text || "[]";
-  return JSON.parse(raw.replace(/```json|```/g, "").trim());
-}
-
-function PasteImportModal({ onClose, onImport }) {
-  const [text, setText] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | parsing | preview | error
-  const [parsed, setParsed] = useState(null);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  async function handleParse() {
-    if (!text.trim()) return;
-    setStatus("parsing");
-    setErrorMsg("");
-    try {
-      const days = await parseWorkoutWithAI(text);
-      if (!Array.isArray(days) || days.length === 0) throw new Error("No days parsed");
-      // Convert to full exercise objects with ids
-      const fullDays = days.map(d => {
-        // Collect unique supersetIds to assign shared group ids
-        const ssMap = {};
-        return {
-          id: uid(),
-          label: d.label || "Imported Day",
-          exercises: d.exercises.map(e => {
-            const rawSs = e.supersetId || null;
-            if (rawSs) {
-              if (!ssMap[rawSs]) ssMap[rawSs] = uid();
-            }
-            return {
-              id: uid(),
-              name: e.name || "",
-              sets: String(e.sets || "3"),
-              reps: String(e.reps || ""),
-              weight: "",
-              unit: "kg",
-              useRir: false, rir: "",
-              useIntensity: !!(e.intensity && e.intensity.trim()),
-              intensity: e.intensity || "",
-              useTempo: !!(e.tempo && e.tempo.trim()),
-              tempo: e.tempo || "",
-              note: e.note || "",
-              supersetId: rawSs ? ssMap[rawSs] : null,
-              last: null
-            };
-          })
-        };
-      });
-      setParsed(fullDays);
-      setStatus("preview");
-    } catch (err) {
-      console.error(err);
-      setErrorMsg("Could not parse workout. Try rephrasing or check your text.");
-      setStatus("error");
-    }
-  }
-
-  return (
-    <div style={pp.overlay}>
-      <div style={pp.sheet}>
-        <div style={pp.sheetHeader}>
-          <div style={pp.sheetTitle}>Paste Workout</div>
-          <button style={pp.sheetClose} onClick={onClose}>✕</button>
-        </div>
-
-        {(status === "idle" || status === "error") && (
-          <>
-            <div style={pp.instructions}>
-              Paste your workout text below — any format works. It will automatically detect days, supersets, sets, reps, and notes.
-            </div>
-            <textarea
-              style={pp.textarea}
-              value={text}
-              onChange={e => { setText(e.target.value); setStatus("idle"); }}
-              placeholder={"Upper Workout\nDay 1 - Monday\nSuperset 1\n1. Bench Press — 3×10\n2. Pull-ups — 3×8\n..."}
-              rows={10}
-              autoFocus
-            />
-            {status === "error" && (
-              <div style={pp.errorMsg}>⚠️ {errorMsg}</div>
-            )}
-            <button
-              style={{ ...pp.parseBtn, opacity: text.trim() ? 1 : 0.4 }}
-              onClick={handleParse}
-              disabled={!text.trim()}
-            >
-              Parse with AI →
-            </button>
-          </>
-        )}
-
-        {status === "parsing" && (
-          <div style={pp.parsingWrap}>
-            <div style={pp.spinner} />
-            <div style={pp.parsingText}>Parsing your workout…</div>
-            <div style={pp.parsingHint}>Claude is reading your program</div>
-          </div>
-        )}
-
-        {status === "preview" && parsed && (
-          <>
-            <div style={pp.previewHeader}>
-              Found <span style={{ color: RED, fontWeight: 700 }}>{parsed.length} day{parsed.length !== 1 ? "s" : ""}</span> · {parsed.reduce((s, d) => s + d.exercises.length, 0)} exercises
-            </div>
-            <div style={pp.previewScroll}>
-              {parsed.map((day, di) => (
-                <div key={di} style={pp.previewDay}>
-                  <div style={pp.previewDayLabel}>{day.label}</div>
-                  {(() => {
-                    // Group by supersetId for preview display
-                    const groups = [];
-                    const seen = new Set();
-                    day.exercises.forEach(e => {
-                      const key = e.supersetId || e.id;
-                      if (!seen.has(key)) {
-                        seen.add(key);
-                        groups.push(day.exercises.filter(x => (x.supersetId || x.id) === key));
-                      }
-                    });
-                    return groups.map((group, gi) => (
-                      <div key={gi} style={pp.previewGroup}>
-                        {group.length > 1 && <div style={pp.previewSsLabel}>Superset</div>}
-                        {group.map((ex, ei) => (
-                          <div key={ei} style={pp.previewEx}>
-                            <span style={pp.previewExName}>{ex.name}</span>
-                            <span style={pp.previewExMeta}>
-                              {ex.sets}×{ex.reps}
-                              {ex.tempo ? ` · ${ex.tempo}` : ""}
-                              {ex.intensity ? ` · ${ex.intensity}` : ""}
-                            </span>
-                            {ex.note ? <div style={pp.previewExNote}>{ex.note}</div> : null}
-                          </div>
-                        ))}
-                      </div>
-                    ));
-                  })()}
-                </div>
-              ))}
-            </div>
-            <div style={pp.previewActions}>
-              <button style={pp.previewBack} onClick={() => setStatus("idle")}>← Edit</button>
-              <button style={pp.previewImport} onClick={() => onImport(parsed)}>
-                Add to Program
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-      `}</style>
-    </div>
-  );
-}
-
-const pp = {
-  pasteBtn: {
-    background: "none", border: `1px solid ${BORDER}`, color: RED,
-    fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 8,
-    cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.04em",
-    display: "flex", alignItems: "center", gap: 4
-  },
-  overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
-    zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center"
-  },
-  sheet: {
-    background: "#1a1a1c", borderRadius: "20px 20px 0 0",
-    padding: "20px 18px 36px", width: "100%", maxWidth: 430,
-    maxHeight: "90vh", display: "flex", flexDirection: "column", gap: 12
-  },
-  sheetHeader: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  sheetTitle: { fontSize: 17, fontWeight: 700, color: TEXT },
-  sheetClose: { background: "none", border: "none", color: DIM, fontSize: 20, cursor: "pointer", lineHeight: 1, padding: 4 },
-  instructions: { fontSize: 13, color: DIM, lineHeight: 1.5 },
-  textarea: {
-    width: "100%", background: SURFACE, border: `1px solid ${BORDER}`,
-    borderRadius: 10, color: TEXT, fontSize: 13, padding: "12px",
-    outline: "none", resize: "vertical", fontFamily: "inherit",
-    lineHeight: 1.5, boxSizing: "border-box"
-  },
-  errorMsg: { fontSize: 12, color: "#ff6b6b", background: "rgba(255,107,107,0.1)", borderRadius: 8, padding: "8px 12px" },
-  parseBtn: {
-    width: "100%", background: RED, border: "none", color: "#fff",
-    fontSize: 15, fontWeight: 700, padding: "14px", borderRadius: 12,
-    cursor: "pointer", fontFamily: "inherit",
-    boxShadow: "0 4px 20px rgba(232,48,42,0.4)"
-  },
-  parsingWrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "40px 0" },
-  spinner: {
-    width: 36, height: 36, borderRadius: "50%",
-    border: `3px solid ${BORDER}`, borderTopColor: RED,
-    animation: "spin 0.8s linear infinite"
-  },
-  parsingText: { fontSize: 15, fontWeight: 600, color: TEXT },
-  parsingHint: { fontSize: 12, color: DIM },
-  previewHeader: { fontSize: 13, color: DIM, paddingBottom: 4, borderBottom: `1px solid ${BORDER}` },
-  previewScroll: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-  previewDay: { display: "flex", flexDirection: "column", gap: 6 },
-  previewDayLabel: { fontSize: 13, fontWeight: 700, color: RED, letterSpacing: "0.04em" },
-  previewGroup: { background: CARD_BG, borderRadius: 10, padding: "8px 12px", border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 4 },
-  previewSsLabel: { fontSize: 9, color: RED, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 },
-  previewEx: { display: "flex", flexDirection: "column", gap: 1 },
-  previewExName: { fontSize: 13, fontWeight: 600, color: TEXT },
-  previewExMeta: { fontSize: 11, color: DIM },
-  previewExNote: { fontSize: 11, color: "#666", fontStyle: "italic" },
-  previewActions: { display: "flex", gap: 8, paddingTop: 4 },
-  previewBack: { flex: 1, background: SURFACE, border: `1px solid ${BORDER}`, color: DIM, fontSize: 14, fontWeight: 600, padding: "12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit" },
-  previewImport: { flex: 2, background: RED, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, padding: "12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit" },
 };
 
 /* ════════════════════════════════
@@ -1396,76 +1120,15 @@ function lastNWeeks(n) {
 
 function monthKey(dateStr) { return dateStr.slice(0, 7); }
 
-const MUSCLE_GROUPS = [
-  { key: "chest", label: "Chest", keywords: ["chest", "fly", "push-up", "pushup", "pec", "bench press", "incline press", "flat press", "cable fly"] },
-  { key: "back", label: "Back", keywords: ["row", "pull", "lat", "t-bar", "pulldown", "chin", "deadlift", "rdl", "back"] },
-  { key: "shoulders", label: "Shoulders", keywords: ["shoulder", "delt", "lateral raise", "shrug", "overhead press", "ohp", "face pull", "reverse fly"] },
-  { key: "arms", label: "Arms", keywords: ["curl", "tricep", "bicep", "hammer", "wrist", "pushdown", "tricep extension", "dip"] },
-  { key: "legs", label: "Legs", keywords: ["squat", "lunge", "leg press", "split squat", "step-up", "jump", "hip thrust", "glute", "calf", "bulgarian", "box squat", "broad jump", "depth drop", "trap bar", "plyo", "sprint", "sled", "prowler", "shuttle", "speed", "vertical", "rdl", "deadlift"] },
-  { key: "core", label: "Core", keywords: ["plank", "sit-up", "crunch", "pallof", "flutter", "wave", "farmer", "med ball", "slam", "hanging leg", "leg raise", "ab", "core", "toes to bar"] },
-];
-
-function loadClassifyCache() {
-  try { const r = localStorage.getItem(CLASSIFY_CACHE_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; }
-}
-function saveClassifyCache(c) { try { localStorage.setItem(CLASSIFY_CACHE_KEY, JSON.stringify(c)); } catch {} }
-
-function keywordClassify(name) {
-  const n = name.toLowerCase();
-  for (const g of MUSCLE_GROUPS) {
-    if (g.keywords.some(k => n.includes(k))) return g.key;
-  }
-  return null;
-}
-
-// FIX: Added timeout + proper error handling for AI classification
-async function aiClassifyExercises(names) {
-  if (!names.length) return {};
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), AI_CLASSIFY_TIMEOUT_MS);
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 1000,
-        system: `You are a fitness expert. Classify each exercise name into exactly one muscle group.
-Reply with ONLY a JSON object mapping exercise name to group key.
-Valid keys: chest, back, shoulders, arms, legs, core, other.
-Example: {"Bench Press":"chest","Pull-up":"back"}`,
-        messages: [{ role: "user", content: `Classify these exercises:\n${names.join("\n")}` }]
-      })
-    });
-    clearTimeout(timeoutId);
-    const data = await resp.json();
-    const text = data.content?.find(b => b.type === "text")?.text || "{}";
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
-  } catch (err) {
-    // FIX: Silently fall back to keyword matching on any error (network, timeout, parse)
-    console.warn("AI classification failed, falling back to keywords:", err);
-    return {};
-  }
-}
-
 /* ════════════════════════════════
    PROGRESS PAGE
 ════════════════════════════════ */
 function ProgressPage({ logs, program, onBack }) {
   const [tab, setTab] = useState("dashboard");
-  const [muscleTab, setMuscleTab] = useState("all");
   const [filterDayId, setFilterDayId] = useState(null);
   const [dayDropOpen, setDayDropOpen] = useState(false);
   const [exPage, setExPage] = useState(0);
   const PAGE_SIZE = 5;
-  const [classMap, setClassMap] = useState(loadClassifyCache);
-  const [classifying, setClassifying] = useState(false);
-  const [overrideTarget, setOverrideTarget] = useState(null);
-
   const hasWeekOfData = (() => {
     if (logs.length < 2) return false;
     const oldest = logs.reduce((a, b) => a.date < b.date ? a : b);
@@ -1484,31 +1147,9 @@ function ProgressPage({ logs, program, onBack }) {
     ? activeDay.exercises
     : [...new Set(logs.flatMap(l => l.exercises.map(e => e.name)))];
 
-  function getGroup(name) {
-    if (classMap[name]) return classMap[name];
-    return keywordClassify(name) || "other";
-  }
+  useEffect(() => { setExPage(0); }, [filterDayId]);
 
-  // FIX: Stable dependency string to avoid over-triggering
-  const exercisesKey = allExercises.join(",");
-  useEffect(() => {
-    const unknown = allExercises.filter(n => !classMap[n] && !keywordClassify(n));
-    if (!unknown.length || classifying) return;
-    setClassifying(true);
-    aiClassifyExercises(unknown).then(result => {
-      setClassMap(prev => {
-        const next = { ...prev, ...result };
-        saveClassifyCache(next);
-        return next;
-      });
-      setClassifying(false);
-    });
-  }, [exercisesKey]);
-
-  useEffect(() => { setExPage(0); }, [muscleTab, filterDayId]);
-
-  const presentGroups = MUSCLE_GROUPS.filter(g => allExercises.some(name => getGroup(name) === g.key));
-  const muscleFilteredExercises = muscleTab === "all" ? allExercises : allExercises.filter(name => getGroup(name) === muscleTab);
+  const muscleFilteredExercises = allExercises;
   const totalExPages = Math.ceil(muscleFilteredExercises.length / PAGE_SIZE);
   const chartExercises = muscleFilteredExercises.slice(exPage * PAGE_SIZE, exPage * PAGE_SIZE + PAGE_SIZE);
 
@@ -1564,15 +1205,6 @@ function ProgressPage({ logs, program, onBack }) {
   const maxHeat = Math.max(...heatmap.map(h => h.count), 1);
   const selectedDayLabel = filterDayId ? dayOptions.find(d => d.id === filterDayId)?.label : null;
 
-  function applyOverride(name, groupKey) {
-    setClassMap(prev => {
-      const next = { ...prev, [name]: groupKey };
-      saveClassifyCache(next);
-      return next;
-    });
-    setOverrideTarget(null);
-  }
-
   return (
     <div style={s.root}>
       <div style={s.header}>
@@ -1582,49 +1214,12 @@ function ProgressPage({ logs, program, onBack }) {
       </div>
 
       <div style={s.subTabBar}>
-        {[["dashboard", "Dashboard"], ["history", "History"], ["classify", "Exercises"]].map(([t, label]) => (
+        {[["dashboard", "Dashboard"], ["history", "History"]].map(([t, label]) => (
           <button key={t} style={{ ...s.subTab, ...(tab === t ? s.subTabActive : {}) }} onClick={() => setTab(t)}>{label}</button>
         ))}
       </div>
 
       <div style={{ ...s.scroll, padding: "12px 14px" }}>
-        {tab === "classify" && (
-          <div>
-            <div style={ds.classifyHeader}>
-              <div style={ds.classifyTitle}>Exercise Classification</div>
-              <div style={ds.classifySub}>{classifying ? "⏳ AI is classifying…" : "Tap 'Change' to reassign any exercise"}</div>
-            </div>
-            {MUSCLE_GROUPS.map((g, gi) => {
-              const exList = allExercises.filter(n => getGroup(n) === g.key);
-              if (!exList.length) return null;
-              return (
-                <div key={g.key} style={ds.classifySection}>
-                  <div style={ds.classifySectionLabel}>{g.label}</div>
-                  {exList.map(name => (
-                    <div key={name} style={ds.classifyRow}>
-                      <div style={{ ...ds.classifyDot, background: EX_COLORS[gi % EX_COLORS.length] }} />
-                      <span style={ds.classifyExName}>{name}</span>
-                      <button style={ds.classifyChangeBtn} onClick={() => setOverrideTarget(name)}>Change</button>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-            {allExercises.filter(n => getGroup(n) === "other").length > 0 && (
-              <div style={ds.classifySection}>
-                <div style={ds.classifySectionLabel}>Unclassified {classifying ? "⏳" : ""}</div>
-                {allExercises.filter(n => getGroup(n) === "other").map(name => (
-                  <div key={name} style={ds.classifyRow}>
-                    <div style={{ ...ds.classifyDot, background: "#444" }} />
-                    <span style={ds.classifyExName}>{name}</span>
-                    <button style={ds.classifyChangeBtn} onClick={() => setOverrideTarget(name)}>Assign</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {tab === "history" && <HistoryTab logs={logs} />}
 
         {tab === "dashboard" && !hasWeekOfData && (
@@ -1675,40 +1270,9 @@ function ProgressPage({ logs, program, onBack }) {
               </div>
             )}
 
-            {presentGroups.length > 1 && (
-              <div style={ds.muscleTabBar}>
-                <button style={{ ...ds.muscleTab, ...(muscleTab === "all" ? ds.muscleTabActive : {}) }} onClick={() => setMuscleTab("all")}>All</button>
-                {presentGroups.map((g, i) => {
-                  const count = allExercises.filter(n => getGroup(n) === g.key).length;
-                  return (
-                    <button key={g.key} style={{ ...ds.muscleTab, ...(muscleTab === g.key ? ds.muscleTabActive : {}) }} onClick={() => setMuscleTab(g.key)}>
-                      {g.label} <span style={ds.muscleTabCount}>{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {muscleTab === "all" && presentGroups.length > 1 && (
-              <div style={ds.muscleOverview}>
-                {presentGroups.map((g, i) => {
-                  const count = allExercises.filter(n => getGroup(n) === g.key).length;
-                  const pct = Math.round((count / allExercises.length) * 100);
-                  return (
-                    <button key={g.key} style={ds.muscleChip} onClick={() => setMuscleTab(g.key)}>
-                      <div style={ds.muscleChipBarWrap}><div style={{ ...ds.muscleChipBarFill, background: EX_COLORS[i % EX_COLORS.length], width: `${pct}%` }} /></div>
-                      <div style={ds.muscleChipBottom}><span style={ds.muscleChipLabel}>{g.label}</span><span style={{ ...ds.muscleChipCount, color: EX_COLORS[i % EX_COLORS.length] }}>{count}</span></div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {classifying && <div style={ds.classifyingBanner}>⏳ AI classifying new exercises…</div>}
-
             {chartExercises.length === 0 && (
               <div style={{ ...ds.chartEmpty, padding: "32px 0", fontSize: 13 }}>
-                No {MUSCLE_GROUPS.find(g => g.key === muscleTab)?.label.toLowerCase()} exercises found.{" "}
+                No exercises found.{" "}
                 <button style={ds.classifyLink} onClick={() => setTab("classify")}>Assign manually →</button>
               </div>
             )}
@@ -1735,7 +1299,7 @@ function ProgressPage({ logs, program, onBack }) {
                       {card.pr > 0 && <div style={{ ...ds.prDelta, color: card.delta >= 0 ? "#4ecdc4" : "#ff6b6b" }}>{card.delta >= 0 ? "▲" : "▼"} {Math.abs(card.delta)} kg</div>}
                     </div>
                   ))}
-                  {muscleTab === "all" && exPage === 0 && (
+                  {exPage === 0 && (
                     <div style={ds.prCard}>
                       <div style={{ ...ds.prAccent, background: "#6366f1" }} />
                       <div style={ds.prName}>Avg Weekly Vol</div>
@@ -1766,7 +1330,7 @@ function ProgressPage({ logs, program, onBack }) {
                     )}
                 </div>
 
-                {muscleTab === "all" && exPage === 0 && (
+                {exPage === 0 && (
                   <>
                     <SectionHeader title="Weekly Training Volume" subtitle={selectedDayLabel ? `${selectedDayLabel} · 8 weeks` : "All days · 8 weeks"} />
                     <div style={ds.chartCard}>
@@ -1816,20 +1380,6 @@ function ProgressPage({ logs, program, onBack }) {
         )}
       </div>
 
-      {overrideTarget && (
-        <div style={ds.modalOverlay} role="dialog" aria-modal="true" aria-label="Assign muscle group">
-          <div style={ds.modal}>
-            <div style={ds.modalTitle}>Assign Muscle Group</div>
-            <div style={ds.modalEx}>"{overrideTarget}"</div>
-            <div style={ds.modalBtns}>
-              {MUSCLE_GROUPS.map((g, i) => (
-                <button key={g.key} style={ds.modalBtn} onClick={() => applyOverride(overrideTarget, g.key)}>
-                  <span style={{ ...ds.modalBtnDot, background: EX_COLORS[i % EX_COLORS.length] }} />{g.label}
-                </button>
-              ))}
-              <button style={ds.modalBtn} onClick={() => applyOverride(overrideTarget, "other")}>
-                <span style={{ ...ds.modalBtnDot, background: "#444" }} />Other
-              </button>
             </div>
             <button style={ds.modalCancel} onClick={() => setOverrideTarget(null)}>Cancel</button>
           </div>
@@ -2129,9 +1679,6 @@ const ds = {
   dayDropLabel: { fontSize: 13, fontWeight: 600, color: TEXT, display: "flex", alignItems: "center", gap: 6 },
   dayDropSub: { fontSize: 10, color: DIM, marginTop: 2 },
   dayDropDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0, display: "inline-block" },
-  muscleTabBar: { display: "flex", overflowX: "auto", gap: 6, marginBottom: 14, scrollbarWidth: "none", paddingBottom: 2 },
-  muscleTab: { background: SURFACE, border: `1px solid ${BORDER}`, color: DIM, fontSize: 12, fontWeight: 600, padding: "6px 14px", borderRadius: 20, cursor: "pointer", flexShrink: 0, fontFamily: "inherit", whiteSpace: "nowrap" },
-  muscleTabActive: { background: RED, border: `1px solid ${RED}`, color: "#fff" },
   muscleOverview: { display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", scrollbarWidth: "none" },
   muscleChip: { background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer", flexShrink: 0, minWidth: 72, display: "flex", flexDirection: "column", gap: 6, fontFamily: "inherit" },
   muscleChipBarWrap: { height: 4, background: "#1a1a1c", borderRadius: 2, overflow: "hidden" },
@@ -2144,29 +1691,13 @@ const ds = {
   notReadyTitle: { fontSize: 18, fontWeight: 700, color: TEXT },
   notReadySub: { fontSize: 13, color: DIM, lineHeight: 1.6, maxWidth: 280 },
   chartEmpty: { textAlign: "center", padding: "24px 0", fontSize: 12, color: "#444", fontStyle: "italic" },
-  muscleTabCount: { fontSize: 10, background: "rgba(255,255,255,0.1)", borderRadius: 8, padding: "1px 5px", marginLeft: 3 },
-  classifyingBanner: { fontSize: 11, color: DIM, textAlign: "center", padding: "6px 0 10px", fontStyle: "italic" },
-  classifyLink: { background: "none", border: "none", color: RED, fontSize: 13, cursor: "pointer", padding: 0, fontFamily: "inherit", textDecoration: "underline" },
-  classifyHeader: { marginBottom: 16 },
-  classifyTitle: { fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 },
-  classifySub: { fontSize: 12, color: DIM },
-  classifySection: { marginBottom: 18 },
-  classifySectionLabel: { fontSize: 10, color: RED, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 8 },
   classifyRow: { display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${BORDER}` },
-  classifyDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
-  classifyExName: { flex: 1, fontSize: 13, color: TEXT },
   classifyChangeBtn: { background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 },
   pageRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   pageInfo: { fontSize: 11, color: DIM },
   pageBtns: { display: "flex", gap: 6 },
   pageBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit" },
-  modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" },
-  modal: { background: "#1e1e20", borderRadius: "18px 18px 0 0", padding: "24px 20px 36px", width: "100%", maxWidth: 430 },
-  modalTitle: { fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 6, textAlign: "center" },
-  modalEx: { fontSize: 13, color: DIM, marginBottom: 18, textAlign: "center", fontStyle: "italic" },
-  modalBtns: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 },
   modalBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 14, fontWeight: 500, padding: "12px 16px", borderRadius: 10, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, fontFamily: "inherit" },
-  modalBtnDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
   modalCancel: { width: "100%", background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 14, padding: "12px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit" },
 };
 
