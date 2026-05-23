@@ -634,9 +634,8 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
                           <ProgramExRow ex={ex}
                             showDivider={i < group.items.length - 1}
                             onEdit={() => { setEditId(ex.id); setEditDraft({ ...ex }); }}
-                            onDelete={() => onDeleteExerciseFromDay(activeDay.id, ex.id)}
+                            onDelete={() => onDeleteExercise(activeDay.id, ex.id)}
                             onToggleSuperset={() => onToggleSuperset(activeDay.id, ex.id)}
-                            _onDelete={() => onDeleteExercise(activeDay.id, ex.id)}
                           />
                         )}
                       </div>
