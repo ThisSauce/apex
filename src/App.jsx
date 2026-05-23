@@ -670,13 +670,6 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
           </div>
         </>
       )}
-          onImport={(days) => {
-            setShowPaste(false);
-            setActiveIdx(program.days.length); // jump to first new day
-            showToast(`Imported ${days.length} day${days.length !== 1 ? "s" : ""}! 💪`, "success");
-          }}
-        />
-      )}
     </div>
   );
 }
