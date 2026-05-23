@@ -768,7 +768,10 @@ const pr = {
 async function parseWorkoutWithAI(text) {
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 1000,
@@ -1424,7 +1427,10 @@ async function aiClassifyExercises(names) {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 1000,
