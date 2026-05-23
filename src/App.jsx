@@ -531,7 +531,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
       <div style={s.progSection}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div style={s.progSectionLabel}>Days per week</div>
-          <button style={pp.pasteBtn} onClick={() => setShowPaste(true)}>⬇ Paste Workout</button>
+          <button style={pp.pasteBtn} onClick={() => setShowPaste(true)}>Paste Workout</button>
         </div>
         <div style={s.dayCountRow}>
           {DAY_OPTIONS.map(n => (
@@ -873,7 +873,7 @@ function PasteImportModal({ onClose, onImport }) {
         {(status === "idle" || status === "error") && (
           <>
             <div style={pp.instructions}>
-              Paste your workout text below — any format works. Claude will automatically detect days, supersets, sets, reps, and notes.
+              Paste your workout text below — any format works. It will automatically detect days, supersets, sets, reps, and notes.
             </div>
             <textarea
               style={pp.textarea}
