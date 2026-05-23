@@ -1142,9 +1142,8 @@ function ProgressPage({ logs, program, onBack }) {
 
   useEffect(() => { setExPage(0); }, [filterDayId]);
 
-  const muscleFilteredExercises = allExercises;
-  const totalExPages = Math.ceil(muscleFilteredExercises.length / PAGE_SIZE);
-  const chartExercises = muscleFilteredExercises.slice(exPage * PAGE_SIZE, exPage * PAGE_SIZE + PAGE_SIZE);
+    const totalExPages = Math.ceil(allExercises.length / PAGE_SIZE);
+  const chartExercises = allExercises.slice(exPage * PAGE_SIZE, exPage * PAGE_SIZE + PAGE_SIZE);
 
   const WEEKS8 = lastNWeeks(8);
   const MONTHS12 = Array.from({ length: 12 }, (_, i) => {
@@ -1243,14 +1242,14 @@ function ProgressPage({ logs, program, onBack }) {
                 {dayDropOpen && (
                   <div style={ds.exDropdown}>
                     <button style={{ ...ds.dayDropItem, ...(filterDayId === null ? ds.exDropItemActive : {}) }}
-                      onClick={() => { setFilterDayId(null); setMuscleTab("all"); setDayDropOpen(false); }}>
+                      onClick={() => { setFilterDayId(null); setDayDropOpen(false); }}>
                       <div style={ds.dayDropLeft}><div style={ds.dayDropLabel}>All Days</div><div style={ds.dayDropSub}>{allExercises.length} total exercises</div></div>
                       {filterDayId === null && <span style={{ color: RED }}>✓</span>}
                     </button>
                     <div style={{ height: 1, background: BORDER }} />
                     {dayOptions.map((d, i) => (
                       <button key={d.id} style={{ ...ds.dayDropItem, ...(filterDayId === d.id ? ds.exDropItemActive : {}) }}
-                        onClick={() => { setFilterDayId(d.id); setMuscleTab("all"); setDayDropOpen(false); }}>
+                        onClick={() => { setFilterDayId(d.id); setDayDropOpen(false); }}>
                         <div style={ds.dayDropLeft}>
                           <div style={ds.dayDropLabel}><span style={{ ...ds.dayDropDot, background: EX_COLORS[i % EX_COLORS.length] }} />{d.label}</div>
                           <div style={ds.dayDropSub}>{d.exercises.length} exercises</div>
@@ -1272,9 +1271,9 @@ function ProgressPage({ logs, program, onBack }) {
 
             {chartExercises.length > 0 && (
               <>
-                {muscleFilteredExercises.length > PAGE_SIZE && (
+                {allExercises.length > PAGE_SIZE && (
                   <div style={ds.pageRow}>
-                    <span style={ds.pageInfo}>Exercises {exPage * PAGE_SIZE + 1}–{Math.min((exPage + 1) * PAGE_SIZE, muscleFilteredExercises.length)} of {muscleFilteredExercises.length}</span>
+                    <span style={ds.pageInfo}>Exercises {exPage * PAGE_SIZE + 1}–{Math.min((exPage + 1) * PAGE_SIZE, allExercises.length)} of {allExercises.length}</span>
                     <div style={ds.pageBtns}>
                       <button style={{ ...ds.pageBtn, opacity: exPage === 0 ? 0.3 : 1 }} onClick={() => setExPage(p => Math.max(0, p - 1))} disabled={exPage === 0}>‹ Prev</button>
                       <button style={{ ...ds.pageBtn, opacity: exPage >= totalExPages - 1 ? 0.3 : 1 }} onClick={() => setExPage(p => Math.min(totalExPages - 1, p + 1))} disabled={exPage >= totalExPages - 1}>Next ›</button>
@@ -1350,7 +1349,7 @@ function ProgressPage({ logs, program, onBack }) {
                     )}
                 </div>
 
-                {muscleFilteredExercises.length > PAGE_SIZE && (
+                {allExercises.length > PAGE_SIZE && (
                   <div style={{ ...ds.pageRow, marginTop: 4 }}>
                     <span style={ds.pageInfo}>{exPage + 1} / {totalExPages}</span>
                     <div style={ds.pageBtns}>
@@ -1372,12 +1371,6 @@ function ProgressPage({ logs, program, onBack }) {
           </>
         )}
       </div>
-
-            </div>
-            <button style={ds.modalCancel} onClick={() => setOverrideTarget(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1672,26 +1665,15 @@ const ds = {
   dayDropLabel: { fontSize: 13, fontWeight: 600, color: TEXT, display: "flex", alignItems: "center", gap: 6 },
   dayDropSub: { fontSize: 10, color: DIM, marginTop: 2 },
   dayDropDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0, display: "inline-block" },
-  muscleOverview: { display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", scrollbarWidth: "none" },
-  muscleChip: { background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer", flexShrink: 0, minWidth: 72, display: "flex", flexDirection: "column", gap: 6, fontFamily: "inherit" },
-  muscleChipBarWrap: { height: 4, background: "#1a1a1c", borderRadius: 2, overflow: "hidden" },
-  muscleChipBarFill: { height: "100%", borderRadius: 2 },
-  muscleChipBottom: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  muscleChipLabel: { fontSize: 10, color: DIM, fontWeight: 600, letterSpacing: "0.04em" },
-  muscleChipCount: { fontSize: 13, fontWeight: 800 },
   notReady: { textAlign: "center", padding: "60px 24px 40px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 },
   notReadyIcon: { fontSize: 44, marginBottom: 4 },
   notReadyTitle: { fontSize: 18, fontWeight: 700, color: TEXT },
   notReadySub: { fontSize: 13, color: DIM, lineHeight: 1.6, maxWidth: 280 },
   chartEmpty: { textAlign: "center", padding: "24px 0", fontSize: 12, color: "#444", fontStyle: "italic" },
-  classifyRow: { display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${BORDER}` },
-  classifyChangeBtn: { background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 },
   pageRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   pageInfo: { fontSize: 11, color: DIM },
   pageBtns: { display: "flex", gap: 6 },
   pageBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit" },
-  modalBtn: { background: SURFACE, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 14, fontWeight: 500, padding: "12px 16px", borderRadius: 10, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, fontFamily: "inherit" },
-  modalCancel: { width: "100%", background: "none", border: `1px solid ${BORDER}`, color: DIM, fontSize: 14, padding: "12px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit" },
 };
 
 function formatDate(iso) {
