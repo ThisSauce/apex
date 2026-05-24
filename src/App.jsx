@@ -21,6 +21,7 @@ function ex(name, sets, reps, opts = {}) {
   return {
     id: makeId(), name, sets: String(sets), reps: String(reps),
     weight: opts.weight || "", unit: opts.unit || "kg",
+    timedSets: !!opts.timedSets, duration: opts.duration || "", rest: opts.rest || "",
     useRir: false, rir: "", useIntensity: !!opts.intensity, intensity: opts.intensity || "",
     useTempo: !!opts.tempo, tempo: opts.tempo || "",
     note: opts.note || "", supersetId: opts.ss || null, last: null
@@ -150,6 +151,7 @@ function saveData(d) { try { localStorage.setItem(SK, JSON.stringify(d)); } catc
 function blankExercise() {
   return {
     id: uid(), name: "", sets: "", reps: "", weight: "", unit: "kg",
+    timedSets: false, duration: "", rest: "",
     useRir: false, rir: "", useIntensity: false, intensity: "",
     useTempo: false, tempo: "", note: "", supersetId: null
   };
@@ -352,6 +354,7 @@ export default function App() {
     const today = new Date().toISOString().slice(0, 10);
     const snapshot = day.exercises.map(e => ({
       name: e.name, sets: e.sets, reps: e.reps, weight: e.weight, unit: e.unit,
+      timedSets: !!e.timedSets, duration: e.duration || "", rest: e.rest || "",
       rir: e.useRir ? e.rir : "", intensity: e.useIntensity ? e.intensity : "",
       tempo: e.useTempo ? e.tempo : "", note: e.note, loggedSets: e.loggedSets || []
     }));
@@ -782,7 +785,10 @@ function ProgramExRow({ ex, showDivider, onEdit, onDelete, onToggleSuperset }) {
   const [confirm, setConfirm] = useState(false);
   const pills = [
     ex.sets && `Sets: ${ex.sets}`,
-    ex.reps && `Reps: ${ex.reps}`,
+    ex.timedSets
+      ? ex.duration && `${ex.duration}s per set`
+      : ex.reps && `Reps: ${ex.reps}`,
+    ex.timedSets && ex.rest && `Rest: ${ex.rest}s`,
     ex.useRir && ex.rir && `RIR: ${ex.rir}`,
     ex.useIntensity && ex.intensity && `Intensity: ${ex.intensity}`,
     ex.useTempo && ex.tempo && `Tempo: ${ex.tempo}`,
@@ -955,7 +961,10 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
 
   function addSet() {
     const prev = savedSets[savedSets.length - 1];
-    onUpdate({ loggedSets: [...savedSets, { reps: prev?.reps || ex.reps || "", weight: prev?.weight || "", unit: prev?.unit || defaultUnit, done: false }] });
+    const newSet = ex.timedSets
+      ? { duration: prev?.duration || ex.duration || "", weight: prev?.weight || "", unit: prev?.unit || defaultUnit, done: false }
+      : { reps: prev?.reps || ex.reps || "", weight: prev?.weight || "", unit: prev?.unit || defaultUnit, done: false };
+    onUpdate({ loggedSets: [...savedSets, newSet] });
   }
 
   function removeSet(i) { onUpdate({ loggedSets: savedSets.filter((_, idx) => idx !== i) }); }
@@ -981,11 +990,14 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
           <span style={s.badgePill}>{ex.badge}</span>
         </div>
 
-        {(ex.sets || ex.reps || programPills.length > 0) && (
+        {(ex.sets || ex.reps || ex.duration || programPills.length > 0) && (
           <div style={s.targetRow}>
             <span style={s.targetLabel}>Target →</span>
             {ex.sets && <span style={s.targetPill}>{ex.sets} sets</span>}
-            {ex.reps && <span style={s.targetPill}>{ex.reps} reps</span>}
+            {ex.timedSets
+              ? ex.duration && <span style={{ ...s.targetPill, color: "#ffa500", borderColor: "rgba(255,165,0,0.3)" }}>{ex.duration}s</span>
+              : ex.reps && <span style={s.targetPill}>{ex.reps} reps</span>}
+            {ex.timedSets && ex.rest && <span style={s.targetPill}>Rest {ex.rest}s</span>}
             {programPills.map((p, i) => <span key={i} style={s.targetPill}>{p}</span>)}
           </div>
         )}
@@ -996,7 +1008,7 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
           {savedSets.length > 0 && (
             <div style={ls.setHeader}>
               <span style={ls.setHeaderNum}>SET</span>
-              <span style={ls.setHeaderField}>REPS</span>
+              <span style={ls.setHeaderField}>{ex.timedSets ? "SECS" : "REPS"}</span>
               <span style={ls.setHeaderField}>WEIGHT</span>
               <span style={ls.setHeaderUnit}>UNIT</span>
               <span style={{ width: 28 }} />
@@ -1012,10 +1024,21 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
                   {set.done ? "✓" : i + 1}
                 </button>
                 <div style={ls.setInputWrap}>
-                  {lastSet?.reps && !set.reps && <span style={ls.setGhost}>{lastSet.reps}</span>}
-                  <input style={{ ...ls.setInput, ...(set.done ? ls.setInputDone : {}) }}
-                    value={set.reps} onChange={e => updateSet(i, { reps: e.target.value })}
-                    placeholder={ex.reps || "—"} inputMode="numeric" aria-label={`Set ${i + 1} reps`} />
+                  {ex.timedSets ? (
+                    <>
+                      {lastSet?.duration && !set.duration && <span style={ls.setGhost}>{lastSet.duration}</span>}
+                      <input style={{ ...ls.setInput, ...(set.done ? ls.setInputDone : {}), borderColor: set.done ? undefined : "rgba(255,165,0,0.4)" }}
+                        value={set.duration || ""} onChange={e => updateSet(i, { duration: e.target.value })}
+                        placeholder={ex.duration || "sec"} inputMode="numeric" aria-label={`Set ${i + 1} seconds`} />
+                    </>
+                  ) : (
+                    <>
+                      {lastSet?.reps && !set.reps && <span style={ls.setGhost}>{lastSet.reps}</span>}
+                      <input style={{ ...ls.setInput, ...(set.done ? ls.setInputDone : {}) }}
+                        value={set.reps || ""} onChange={e => updateSet(i, { reps: e.target.value })}
+                        placeholder={ex.reps || "—"} inputMode="numeric" aria-label={`Set ${i + 1} reps`} />
+                    </>
+                  )}
                 </div>
                 <div style={ls.setInputWrap}>
                   {lastSet?.weight && !set.weight && <span style={ls.setGhost}>{lastSet.weight}</span>}
@@ -1039,7 +1062,10 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
             <div style={ls.lastWeekHint}>
               <span style={s.lastLabel}>Last week →</span>
               {lastSets.slice(0, 3).map((ls2, i) => (
-                <span key={i} style={s.lastPill}>{ls2.reps} reps @ {ls2.weight}{ls2.unit}</span>
+                <span key={i} style={s.lastPill}>
+                  {ex.timedSets ? `${ls2.duration || "?"}s` : `${ls2.reps || "?"} reps`}
+                  {ls2.weight ? ` @ ${ls2.weight}${ls2.unit}` : ""}
+                </span>
               ))}
               {lastSets.length > 3 && <span style={s.lastPill}>+{lastSets.length - 3} more</span>}
             </div>
@@ -1112,8 +1138,27 @@ function ExerciseForm({ draft, onChange, onSave, onCancel, title, saveLabel, nam
       </div>
       <div style={s.rowGap}>
         <SmField label="Target Sets" value={draft.sets} onChange={set("sets")} placeholder="3" />
-        <SmField label="Target Reps" value={draft.reps} onChange={set("reps")} placeholder="10" />
+        <div style={{ flex: 1 }}>
+          <div style={s.fieldLabel}>Mode</div>
+          <div style={s.unitRow}>
+            <button style={{ ...s.unitBtn, ...(!draft.timedSets ? s.unitBtnOn : {}) }}
+              onClick={() => onChange({ ...draft, timedSets: false })}>Reps</button>
+            <button style={{ ...s.unitBtn, ...(draft.timedSets ? s.unitBtnOn : {}) }}
+              onClick={() => onChange({ ...draft, timedSets: true })}>Time</button>
+          </div>
+        </div>
       </div>
+      {draft.timedSets ? (
+        <div style={s.rowGap}>
+          <SmField label="Duration (sec)" value={draft.duration} onChange={set("duration")} placeholder="30" />
+          <SmField label="Rest (sec)" value={draft.rest} onChange={set("rest")} placeholder="60" />
+        </div>
+      ) : (
+        <div style={s.rowGap}>
+          <SmField label="Target Reps" value={draft.reps} onChange={set("reps")} placeholder="10" />
+          <div style={{ flex: 1 }} />
+        </div>
+      )}
       <div style={s.rowGap}>
         <SmField label="Weight" value={draft.weight} onChange={set("weight")} placeholder="60" />
         <div style={{ flex: 1 }}>
