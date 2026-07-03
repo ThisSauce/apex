@@ -896,6 +896,15 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
           </div>
         </>
       )}
+
+      {showImport && (
+        <ImportWorkoutPage
+          days={days}
+          onClose={() => setShowImport(false)}
+          onAddExercise={onAddExercise}
+          showToast={showToast}
+        />
+      )}
     </div>
   );
 }
