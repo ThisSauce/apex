@@ -530,6 +530,10 @@ export default function App() {
           onSelectDay={id => setActiveDayId(id)}
           onUpdateExercise={(exId, patch) => updateExerciseInDay(activeDayId, exId, patch)}
           onLog={(note) => logWorkout(activeDayId, note)}
+          onSaveLastDate={(dayId, date) => setData(prev => ({
+            ...prev,
+            lastLogged: { ...prev.lastLogged, [`${dayId}_lastDate`]: date }
+          }))}
           showToast={showToast}
         />
         <Toast toast={toast} />
@@ -960,14 +964,33 @@ const pr = {
 /* ════════════════════════════════
    EXERCISE PAGE
 ════════════════════════════════ */
-function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateExercise, onLog, showToast }) {
+function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateExercise, onLog, showToast, onSaveLastDate }) {
   const [showNotes, setShowNotes] = useState(false);
   const [sessionNote, setSessionNote] = useState("");
   const [logged, setLogged] = useState(false);
+  const [workoutActive, setWorkoutActive] = useState(false); // true once first set is marked done
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [pendingDayId, setPendingDayId] = useState(null); // day user tried to switch to
   const noteRef = useRef(null);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
   const scrollRef = useRef(null);
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Auto-clear sets when day changes or date changes
+  useEffect(() => {
+    if (!day) return;
+    const lastLoggedDate = lastLogged[`${day.id}_lastDate`] || null;
+    if (lastLoggedDate !== today) {
+      // New day — clear all logged sets
+      day.exercises.forEach(e => {
+        if (e.loggedSets && e.loggedSets.length > 0) {
+          onUpdateExercise(e.id, { loggedSets: [] });
+        }
+      });
+      setWorkoutActive(false);
+    }
+  }, [day?.id, today]);
 
   const exercises = day?.exercises || [];
   const badged = useMemo(() => assignBadges(exercises), [exercises]);
@@ -978,7 +1001,7 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
   function swipeToDay(dir) {
     const nextIdx = currentIdx + dir;
     if (nextIdx >= 0 && nextIdx < allDays.length) {
-      onSelectDay(allDays[nextIdx].id);
+      handleDaySwitch(allDays[nextIdx].id);
     }
   }
 
@@ -1050,12 +1073,35 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
         {allDays.map(d => (
           <button key={d.id}
             style={{ ...s.tab, ...(d.id === day.id ? s.tabActive : {}) }}
-            onClick={() => onSelectDay(d.id)}>
+            onClick={() => handleDaySwitch(d.id)}>
             <span style={{ ...s.tabText, ...(d.id === day.id ? s.tabTextActive : {}) }}>{d.label}</span>
             {d.id === day.id && <div style={s.tabUnderline} />}
           </button>
         ))}
       </div>
+
+      {/* Workout active banner */}
+      {workoutActive && (
+        <div style={ex_s.activeBanner}>
+          <div style={ex_s.activeBannerDot} />
+          <span style={ex_s.activeBannerText}>Workout in progress</span>
+          <button style={ex_s.activeBannerFinish} onClick={handleLog}>Finish</button>
+        </div>
+      )}
+
+      {/* Discard confirm modal */}
+      {showDiscardConfirm && (
+        <div style={ex_s.noteOverlay}>
+          <div style={ex_s.noteModal}>
+            <div style={ex_s.noteTitle}>Active Workout</div>
+            <div style={ex_s.noteSub}>You have sets logged. Switch days and discard progress?</div>
+            <div style={ex_s.noteActions}>
+              <button style={ex_s.noteSkipBtn} onClick={() => { setShowDiscardConfirm(false); setPendingDayId(null); }}>Stay</button>
+              <button style={{ ...ex_s.noteSaveBtn, background: "#7a1a1a" }} onClick={handleDiscard}>Discard & Switch</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Swipe hint */}
       <div style={sw.swipeHintRow}>
@@ -1100,6 +1146,7 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
                       ex={ex} last={last}
                       showDivider={i < group.items.length - 1}
                       onUpdate={patch => onUpdateExercise(ex.id, patch)}
+                      onSetActive={() => setWorkoutActive(true)}
                     />
                   </div>
                 );
@@ -1158,48 +1205,91 @@ const ex_s = {
   noteActions: { display: "flex", gap: 10, marginTop: 14 },
   noteSkipBtn: { flex: 1, background: SURFACE, border: `1px solid ${BORDER}`, color: DIM, fontSize: 14, fontWeight: 600, padding: "13px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit" },
   noteSaveBtn: { flex: 2, background: RED, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, padding: "13px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit" },
+
+  // Workout active banner
+  activeBanner: { display: "flex", alignItems: "center", gap: 8, background: "rgba(232,48,42,0.1)", border: `1px solid rgba(232,48,42,0.3)`, borderRadius: 0, padding: "8px 16px" },
+  activeBannerDot: { width: 8, height: 8, borderRadius: "50%", background: RED, flexShrink: 0, animation: "livePulse 1s infinite" },
+  activeBannerText: { fontSize: 12, color: RED, fontWeight: 600, flex: 1 },
+  activeBannerFinish: { background: RED, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit" },
 };
 
-function LogExRow({ ex, last, showDivider, onUpdate }) {
+function LogExRow({ ex, last, showDivider, onUpdate, onSetActive }) {
   const savedSets = ex.loggedSets || [];
   const targetSets = parseInt(ex.sets) || 0;
   const defaultUnit = ex.unit || "kg";
   const lastSets = last?.loggedSets || [];
   const restSeconds = parseInt(ex.rest) || 0;
 
-  const [restTimer, setRestTimer] = useState(null); // null = inactive, number = seconds remaining
+  const [restTimer, setRestTimer] = useState(null); // seconds remaining, null = inactive
   const [restTotal, setRestTotal] = useState(0);
   const timerRef = useRef(null);
+  const restEndTime = useRef(null); // absolute end timestamp (ms)
 
-  function startRestTimer() {
-    if (!restSeconds) return;
+  function startRestTimer(extraSecs = 0) {
+    if (!restSeconds && !extraSecs) return;
+    const secs = extraSecs || restSeconds;
+    const endAt = Date.now() + secs * 1000;
+    restEndTime.current = endAt;
+    setRestTotal(secs);
+    setRestTimer(secs);
     clearInterval(timerRef.current);
-    setRestTotal(restSeconds);
-    setRestTimer(restSeconds);
     timerRef.current = setInterval(() => {
-      setRestTimer(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current);
-          // Vibrate on completion if supported
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-          return 0;
+      const remaining = Math.max(0, Math.round((restEndTime.current - Date.now()) / 1000));
+      setRestTimer(remaining);
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        // Push notification if permitted
+        if (Notification.permission === "granted") {
+          new Notification("APEX", { body: "Rest complete — start your next set!", icon: "/icon-192.png", silent: false });
         }
-        return prev - 1;
-      });
-    }, 1000);
+      }
+    }, 500); // tick every 500ms for accuracy when returning from background
   }
 
   function skipTimer() {
     clearInterval(timerRef.current);
+    restEndTime.current = null;
     setRestTimer(null);
   }
 
   function addTime(secs) {
-    setRestTimer(prev => (prev || 0) + secs);
+    if (restEndTime.current) {
+      restEndTime.current += secs * 1000;
+    } else {
+      restEndTime.current = Date.now() + secs * 1000;
+    }
     setRestTotal(prev => prev + secs);
+    setRestTimer(prev => (prev || 0) + secs);
+    // Restart interval if not running
+    if (!timerRef.current) startRestTimer(secs);
   }
 
-  useEffect(() => () => clearInterval(timerRef.current), []);
+  // Re-sync timer when app comes back to foreground
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (!document.hidden && restEndTime.current && timerRef.current) {
+        const remaining = Math.max(0, Math.round((restEndTime.current - Date.now()) / 1000));
+        setRestTimer(remaining);
+        if (remaining <= 0) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      clearInterval(timerRef.current);
+    };
+  }, []);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   function updateSet(i, patch) {
     const next = [...savedSets];
@@ -1220,8 +1310,10 @@ function LogExRow({ ex, last, showDivider, onUpdate }) {
   function toggleDone(i) {
     const wasNotDone = !savedSets[i].done;
     updateSet(i, { done: wasNotDone });
-    // Start rest timer when marking a set as done (not when un-marking)
-    if (wasNotDone) startRestTimer();
+    if (wasNotDone) {
+      startRestTimer();
+      if (onSetActive) onSetActive();
+    }
   }
 
   const programPills = [
