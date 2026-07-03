@@ -650,6 +650,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [addToSupersetId, setAddToSupersetId] = useState(null);
   const [draft, setDraft] = useState(blankExercise());
   const [nameError, setNameError] = useState(false); // FIX: inline validation error
@@ -736,7 +737,9 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
       <div style={s.header}>
         <button style={s.backBtn} onClick={onBack}>‹</button>
         <span style={s.headerTitle}>Program Builder</span>
-        <span style={{ width: 32 }} />
+        <button style={ip.importBtn} onClick={() => setShowImport(true)} title="Import workout from text">
+          <span style={ip.importPlus}>+</span>
+        </button>
       </div>
 
       <div style={s.progSection}>
@@ -903,6 +906,156 @@ function ProgramExRowWrapper({ ex, showDivider, onEdit, onDeleteExercise, onTogg
     onDelete={() => onDeleteExercise(dayId, ex.id)}
     onToggleSuperset={() => onToggleSuperset(dayId, ex.id)} />;
 }
+
+/* ════════════════════════════════
+   IMPORT WORKOUT PAGE
+════════════════════════════════ */
+function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
+  const [tab, setTab] = useState("paste");
+  const [text, setText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parsed, setParsed] = useState(null);
+  const [parseError, setParseError] = useState(null);
+  const [targetDayId, setTargetDayId] = useState(days[0]?.id || null);
+
+  async function handleAnalyse() {
+    if (!text.trim()) return;
+    setParsing(true);
+    setParseError(null);
+    setParsed(null);
+    const isLocal = import.meta.env.DEV;
+    const url = isLocal ? "https://api.groq.com/openai/v1/chat/completions" : "/api/groq";
+    const headers = { "Content-Type": "application/json" };
+    if (isLocal) headers["Authorization"] = `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`;
+    const prompt = `You are a fitness expert. Extract workout data from the text below and return ONLY a valid JSON array with no explanation or markdown.
+Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": number, "reps": string, "rest": number, "note": string }] }
+Group by day if multiple days. If no days mentioned use "Imported Workout".
+Text: ${text}`;
+    try {
+      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 1200, temperature: 0.2 }) });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message);
+      const raw = data.choices?.[0]?.message?.content || "[]";
+      const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
+      const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
+      const result = JSON.parse(cleaned.slice(s, e + 1));
+      setParsed(result);
+      setTab("preview");
+    } catch (err) { setParseError(`Could not analyse: ${err.message}`); }
+    finally { setParsing(false); }
+  }
+
+  function handleAdd() {
+    if (!parsed) return;
+    let added = 0;
+    parsed.forEach(group => {
+      const matchedDay = days.find(d => d.label.toLowerCase().includes((group.dayLabel || "").toLowerCase().split(" ")[0]));
+      const targetDay = matchedDay || days.find(d => d.id === targetDayId) || days[0];
+      if (!targetDay) return;
+      group.exercises.forEach(e => {
+        onAddExercise(targetDay.id, { id: Math.random().toString(36).slice(2,9), name: e.name, sets: String(e.sets||3), reps: String(e.reps||"8"), weight: "", unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "", useTempo: false, tempo: "", rest: e.rest ? String(e.rest) : "", note: e.note||"", supersetId: null });
+        added++;
+      });
+    });
+    showToast(`Added ${added} exercises to your program`, "success");
+    onClose();
+  }
+
+  const totalEx = parsed?.reduce((s, g) => s + g.exercises.length, 0) || 0;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: SCREEN_BG, zIndex: 100, display: "flex", flexDirection: "column", maxWidth: 430, margin: "0 auto" }}>
+      <div style={s.header}>
+        <button style={s.backBtn} onClick={onClose}>✕</button>
+        <span style={s.headerTitle}>Import Workout</span>
+        <span style={{ width: 32 }} />
+      </div>
+      <div style={s.subTabBar}>
+        <button style={{ ...s.subTab, ...(tab==="paste" ? s.subTabActive : {}) }} onClick={() => setTab("paste")}>Paste</button>
+        <button style={{ ...s.subTab, ...(tab==="preview" ? s.subTabActive : {}), opacity: parsed ? 1 : 0.4 }} onClick={() => parsed && setTab("preview")}>
+          Preview{parsed ? ` · ${totalEx}` : ""}
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+        {tab === "paste" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 11, color: DIM, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>Paste your workout text</div>
+            <textarea style={ip.textarea} value={text} onChange={e => setText(e.target.value)} placeholder={"Paste anything — coach notes, Reddit programs, WhatsApp messages...
+
+Example:
+Push Day
+Bench Press 4x8 rest 3min
+Incline DB Press 3x10 rest 90s
+Lateral Raise 3x15"} rows={10} />
+            <div style={ip.hintCard}>
+              <div style={ip.hintTitle}>What Apex can read</div>
+              <div style={ip.hintText}>Sets, reps, rest times, exercise names, day names, tempos, notes — paste any format and Apex figures it out.</div>
+            </div>
+            {parseError && <div style={{ fontSize: 13, color: "#ff6b6b" }}>{parseError}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={s.btnCancel} onClick={onClose}>Cancel</button>
+              <button style={{ ...s.btnSave, opacity: (!text.trim() || parsing) ? 0.5 : 1 }} onClick={handleAnalyse} disabled={!text.trim() || parsing}>
+                {parsing ? "Analysing..." : "Analyse ›"}
+              </button>
+            </div>
+          </div>
+        )}
+        {tab === "preview" && parsed && (
+          <div>
+            <div style={{ fontSize: 12, color: DIM, marginBottom: 14 }}>Found <span style={{ color: TEXT, fontWeight: 700 }}>{parsed.length} day{parsed.length!==1?"s":""}</span> · <span style={{ color: TEXT, fontWeight: 700 }}>{totalEx} exercises</span></div>
+            {parsed.map((group, gi) => (
+              <div key={gi} style={{ ...s.groupCard, borderColor: "rgba(232,48,42,0.35)", borderLeft: `3px solid ${RED}`, marginBottom: 12 }}>
+                <div style={{ background: "rgba(232,48,42,0.08)", padding: "8px 14px", margin: "0 -14px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: RED }} />
+                  <span style={{ fontSize: 12, color: RED, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>{group.dayLabel}</span>
+                  <span style={{ fontSize: 11, color: DIM, marginLeft: "auto" }}>{group.exercises.length} exercises</span>
+                </div>
+                {group.exercises.map((ex, ei) => (
+                  <div key={ei} style={{ padding: "10px 0", borderBottom: ei < group.exercises.length-1 ? `1px solid ${BORDER}` : "none" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 5 }}>{ex.name}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {ex.sets && ex.reps && <span style={s.statPill}>{ex.sets} × {ex.reps}</span>}
+                      {ex.rest > 0 && <span style={{ ...s.statPill, color: "#a78bfa", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.08)" }}>Rest {ex.rest}s</span>}
+                      {ex.note && <span style={s.statPill}>{ex.note}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {days.length > 1 && parsed.length === 1 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: DIM, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Add to day</div>
+                {days.map(d => (
+                  <button key={d.id} style={{ ...ip.dayPickerBtn, ...(targetDayId===d.id ? ip.dayPickerBtnOn : {}), marginBottom: 6 }} onClick={() => setTargetDayId(d.id)}>
+                    {d.label}{targetDayId===d.id && <span style={{ color: RED, marginLeft: "auto" }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={s.btnCancel} onClick={() => setTab("paste")}>‹ Edit</button>
+              <button style={s.btnSave} onClick={handleAdd}>Add to Program</button>
+            </div>
+            <div style={{ height: 24 }} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Import styles */
+const ip = {
+  importBtn: { width: 32, height: 32, borderRadius: "50%", background: RED, border: "none", color: "#fff", fontSize: 22, fontWeight: 300, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 },
+  importPlus: { fontSize: 22, fontWeight: 300, lineHeight: 1 },
+  textarea: { width: "100%", background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 13, padding: "12px 14px", outline: "none", boxSizing: "border-box", fontFamily: "inherit", resize: "none", lineHeight: 1.6, minHeight: 200 },
+  hintCard: { background: "#111", borderRadius: 10, padding: "10px 14px", border: `1px solid ${BORDER}` },
+  hintTitle: { fontSize: 11, color: RED, fontWeight: 700, marginBottom: 4, letterSpacing: "0.04em" },
+  hintText: { fontSize: 12, color: DIM, lineHeight: 1.5 },
+  dayPickerBtn: { width: "100%", background: CARD_BG, border: `1px solid ${BORDER}`, color: DIM, fontSize: 13, fontWeight: 600, padding: "11px 14px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center" },
+  dayPickerBtnOn: { border: `1px solid ${RED}`, color: TEXT, background: "rgba(232,48,42,0.08)" },
+};
+
 
 function ProgramExRow({ ex, showDivider, onEdit, onDelete, onToggleSuperset }) {
   const [confirm, setConfirm] = useState(false);
