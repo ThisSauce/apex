@@ -989,7 +989,7 @@ Text: ${text}`;
         {tab === "paste" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ fontSize: 11, color: DIM, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>Paste your workout text</div>
-            <textarea style={ip.textarea} value={text} onChange={e => setText(e.target.value)} placeholder="Paste anything — coach notes, Reddit programs, WhatsApp messages... Example: Push Day / Bench Press 4x8 rest 3min / Incline DB Press 3x10 rest 90s" rows={10} />
+            <textarea style={ip.textarea} value={text} onChange={e => setText(e.target.value)} placeholder={`Paste anything — coach notes, Reddit programs, WhatsApp messages... Example: Push Day / Bench Press 4x8 rest 3min / Incline DB Press 3x10 rest 90s`} rows={10} />
             <div style={ip.hintCard}>
               <div style={ip.hintTitle}>What Apex can read</div>
               <div style={ip.hintText}>Sets, reps, rest times, exercise names, day names, tempos, notes — paste any format and Apex figures it out.</div>
