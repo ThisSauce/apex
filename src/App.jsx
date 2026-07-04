@@ -940,7 +940,7 @@ async function callGeminiAI(prompt, { maxTokens = 2000, temperature = 0.3 } = {}
   // { prompt, maxTokens, temperature } body and return { text } — both are
   // handled below.
   const body = isLocal
-    ? { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature } }
+    ? { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature, thinkingConfig: { thinkingLevel: "low" } } }
     : { prompt, maxTokens, temperature };
 
   const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
@@ -1017,7 +1017,7 @@ Group by day if multiple days appear in this text. If no day name is mentioned u
 Text: ${chunkText}`;
     let raw;
     try {
-      raw = await callGeminiAI(prompt, { maxTokens: 4000, temperature: 0.2 });
+      raw = await callGeminiAI(prompt, { maxTokens: 6000, temperature: 0.2 });
     } catch (err) {
       if (err.isRateLimit && attempt < 4) {
         // Gemini's quota error usually includes a retryDelay in seconds.
@@ -2158,7 +2158,7 @@ The "suggestions" value must be an array of up to 5 objects, each with:
 Return ONLY valid JSON, no markdown fences, no extra text.`;
 
     try {
-      const raw = await callGeminiAI(prompt, { maxTokens: 1800, temperature: 0.5 });
+      const raw = await callGeminiAI(prompt, { maxTokens: 3000, temperature: 0.5 });
       // Robust JSON extraction — handle literal newlines inside string values
       let parsed = { report: "", suggestions: [] };
       const jsonStart = raw.indexOf('{');
