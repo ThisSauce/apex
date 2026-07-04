@@ -1050,20 +1050,28 @@ Text: ${chunkText}`;
     const chunks = splitIntoDayChunks(text);
     const allResults = [];
     const failedChunks = [];
+    const CONCURRENCY = 3; // run a few days at once instead of fully sequential
+    let completed = 0;
     try {
-      for (let i = 0; i < chunks.length; i++) {
-        if (chunks.length > 1) setParseProgress({ current: i + 1, total: chunks.length });
-        // Small gap between requests so we don't trip Gemini's per-minute rate limit.
-        if (i > 0) await sleepMs(1500);
-        try {
-          const result = await analyseChunk(chunks[i]);
-          allResults.push(...result);
-        } catch (chunkErr) {
-          // Keep going on other days even if one chunk fails, and report
-          // which day(s) failed at the end rather than losing everything.
-          const firstLine = chunks[i].split("\n")[0].trim().slice(0, 40) || `section ${i + 1}`;
-          failedChunks.push(`${firstLine} (${chunkErr.message})`);
-        }
+      for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY) {
+        const batch = chunks.slice(batchStart, batchStart + CONCURRENCY);
+        const batchResults = await Promise.allSettled(batch.map(chunk => analyseChunk(chunk)));
+        batchResults.forEach((res, bi) => {
+          const chunkIdx = batchStart + bi;
+          completed++;
+          if (chunks.length > 1) setParseProgress({ current: completed, total: chunks.length });
+          if (res.status === "fulfilled") {
+            allResults.push(...res.value);
+          } else {
+            // Keep going on other days even if one chunk fails, and report
+            // which day(s) failed at the end rather than losing everything.
+            const firstLine = chunks[chunkIdx].split("\n")[0].trim().slice(0, 40) || `section ${chunkIdx + 1}`;
+            failedChunks.push(`${firstLine} (${res.reason?.message || "failed"})`);
+          }
+        });
+        // Small gap between batches (not between every single request) so we
+        // don't trip Gemini's per-minute rate limit.
+        if (batchStart + CONCURRENCY < chunks.length) await sleepMs(800);
       }
       if (allResults.length === 0) {
         throw new Error(failedChunks.length ? failedChunks.join("; ") : "No exercises were found in the pasted text.");
