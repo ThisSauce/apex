@@ -952,7 +952,9 @@ function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
     return sawHeader ? chunks.filter(c => c.trim().length > 0) : [fullText];
   }
 
-  async function analyseChunk(chunkText) {
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function analyseChunk(chunkText, attempt = 0) {
     const isLocal = import.meta.env.DEV;
     const url = isLocal ? "https://api.groq.com/openai/v1/chat/completions" : "/api/groq";
     const headers = { "Content-Type": "application/json" };
@@ -964,7 +966,19 @@ Keep "note" short (a few words) or omit it — don't restate the sets/reps there
 Text: ${chunkText}`;
     const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 4000, temperature: 0.2 }) });
     const data = await resp.json();
-    if (data.error) throw new Error(data.error.message);
+    if (data.error) {
+      const msg = data.error.message || "Request failed";
+      const isRateLimit = resp.status === 429 || /rate limit/i.test(msg);
+      if (isRateLimit && attempt < 4) {
+        // Groq tells us how long to wait, e.g. "...try again in 12.9s...".
+        const waitMatch = msg.match(/try again in ([\d.]+)s/i);
+        const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 500 : (attempt + 1) * 4000;
+        await sleep(waitMs);
+        return analyseChunk(chunkText, attempt + 1);
+      }
+      if (isRateLimit) throw new Error("hit Groq's rate limit — wait a minute and try again with fewer days at once");
+      throw new Error(msg);
+    }
     const raw = data.choices?.[0]?.message?.content || "[]";
     const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
     const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
@@ -990,6 +1004,8 @@ Text: ${chunkText}`;
     try {
       for (let i = 0; i < chunks.length; i++) {
         if (chunks.length > 1) setParseProgress({ current: i + 1, total: chunks.length });
+        // Small gap between requests so we don't trip Groq's per-minute rate limit.
+        if (i > 0) await sleep(1500);
         try {
           const result = await analyseChunk(chunks[i]);
           allResults.push(...result);
