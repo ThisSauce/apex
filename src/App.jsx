@@ -1005,9 +1005,15 @@ function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
 
   async function analyseChunk(chunkText, attempt = 0) {
     const prompt = `You are a fitness expert. Extract workout data from the text below and return ONLY a valid JSON array with no explanation or markdown.
-Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": number, "reps": string, "rest": number, "note": string }] }
+Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": number, "reps": string, "rest": number, "note": string, "supersetLabel": string|null }] }
+
+Rules for filling these in:
+- "rest" is the rest time IN SECONDS. Convert any written time to seconds (e.g. "90s" → 90, "2 min" → 120). If a range is given (e.g. "2–3 min"), use the midpoint rounded to the nearest 5 seconds (e.g. 150). If a rest time is only given once for a whole block of exercises (e.g. "⏱ 2–3 min rest between supersets" written above several exercises, or "rest 90s between exercises" as a warmup-level note), apply that same rest value to every exercise in that block unless a specific exercise overrides it.
+- "supersetLabel" marks exercises that are performed as a true superset (back-to-back, alternating, sharing one rest period) — this is ONLY when the text explicitly groups them under a heading containing the word "Superset" (e.g. "Superset 1", "Superset 2A", "Superset 3 • Core Stability"). Use that exact heading text as the label so exercises under the same heading share the same label string. Do NOT invent a supersetLabel for warmups, finishers, or any plain numbered list that isn't headed "Superset" — those are just sequential exercises, so leave supersetLabel null for them even though they're grouped under a heading.
+- "note" should capture short qualifiers that don't fit elsewhere: tempo notation (e.g. "3-0-1 tempo"), hold times (e.g. "2s squeeze", "10s hold"), or "to failure"/"each side" style modifiers. Keep it to a few words. Don't restate the sets/reps/rest here.
+- If a rep count is a range (e.g. "8–10"), keep it as written in "reps" (as a string), don't average it.
+
 Group by day if multiple days appear in this text. If no day name is mentioned use "Imported Workout".
-Keep "note" short (a few words) or omit it — don't restate the sets/reps there.
 Text: ${chunkText}`;
     let raw;
     try {
@@ -1082,8 +1088,16 @@ Text: ${chunkText}`;
       const matchedDay = days.find(d => d.label.toLowerCase().includes((group.dayLabel || "").toLowerCase().split(" ")[0]));
       const targetDay = matchedDay || days.find(d => d.id === targetDayId) || days[0];
       if (!targetDay) return;
+      // Exercises sharing the same supersetLabel (e.g. "Superset 2A") get
+      // linked with the same supersetId, which is how the app groups them.
+      const labelToId = {};
       group.exercises.forEach(e => {
-        onAddExercise(targetDay.id, { id: Math.random().toString(36).slice(2,9), name: e.name, sets: String(e.sets||3), reps: String(e.reps||"8"), weight: "", unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "", useTempo: false, tempo: "", rest: e.rest ? String(e.rest) : "", note: e.note||"", supersetId: null });
+        let supersetId = null;
+        if (e.supersetLabel) {
+          if (!labelToId[e.supersetLabel]) labelToId[e.supersetLabel] = uid();
+          supersetId = labelToId[e.supersetLabel];
+        }
+        onAddExercise(targetDay.id, { id: Math.random().toString(36).slice(2,9), name: e.name, sets: String(e.sets||3), reps: String(e.reps||"8"), weight: "", unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "", useTempo: false, tempo: "", rest: e.rest ? String(e.rest) : "", note: e.note||"", supersetId });
         added++;
       });
     });
@@ -1134,16 +1148,32 @@ Text: ${chunkText}`;
                   <span style={{ fontSize: 12, color: RED, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>{group.dayLabel}</span>
                   <span style={{ fontSize: 11, color: DIM, marginLeft: "auto" }}>{group.exercises.length} exercises</span>
                 </div>
-                {group.exercises.map((ex, ei) => (
-                  <div key={ei} style={{ padding: "10px 0", borderBottom: ei < group.exercises.length-1 ? `1px solid ${BORDER}` : "none" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 5 }}>{ex.name}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                      {ex.sets && ex.reps && <span style={s.statPill}>{ex.sets} × {ex.reps}</span>}
-                      {ex.rest > 0 && <span style={{ ...s.statPill, color: "#a78bfa", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.08)" }}>Rest {ex.rest}s</span>}
-                      {ex.note && <span style={s.statPill}>{ex.note}</span>}
+                {group.exercises.map((ex, ei) => {
+                  const prevLabel = ei > 0 ? group.exercises[ei - 1].supersetLabel : null;
+                  const startsNewSuperset = ex.supersetLabel && ex.supersetLabel !== prevLabel;
+                  return (
+                    <div key={ei}>
+                      {startsNewSuperset && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: ei > 0 ? 10 : 4, marginBottom: 2 }}>
+                          <span style={{ background: RED, color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 9px", borderRadius: 20, letterSpacing: "0.04em", textTransform: "uppercase" }}>{ex.supersetLabel}</span>
+                          <div style={{ flex: 1, height: 1, background: RED, opacity: 0.25 }} />
+                        </div>
+                      )}
+                      <div style={{
+                        padding: "10px 0", borderBottom: ei < group.exercises.length-1 ? `1px solid ${BORDER}` : "none",
+                        paddingLeft: ex.supersetLabel ? 10 : 0,
+                        borderLeft: ex.supersetLabel ? `2px solid rgba(232,48,42,0.3)` : "none",
+                      }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 5 }}>{ex.name}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {ex.sets && ex.reps && <span style={s.statPill}>{ex.sets} × {ex.reps}</span>}
+                          {ex.rest > 0 && <span style={{ ...s.statPill, color: "#a78bfa", borderColor: "rgba(167,139,250,0.3)", background: "rgba(167,139,250,0.08)" }}>Rest {ex.rest}s</span>}
+                          {ex.note && <span style={s.statPill}>{ex.note}</span>}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ))}
             {days.length > 1 && parsed.length === 1 && (
