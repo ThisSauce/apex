@@ -947,10 +947,20 @@ async function callGeminiAI(prompt, { maxTokens = 2000, temperature = 0.3 } = {}
   const data = await resp.json();
 
   if (data.error) {
-    const msg = typeof data.error === "string" ? data.error : (data.error.message || "Gemini request failed");
-    const isRateLimit = resp.status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(msg);
+    const errObj = typeof data.error === "string" ? { message: data.error } : data.error;
+    const msg = errObj.message || "Gemini request failed";
+    const isRateLimit = resp.status === 429 || errObj.status === "RESOURCE_EXHAUSTED" || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(msg);
     const err = new Error(msg);
     err.isRateLimit = isRateLimit;
+    // Google returns the precise wait time in error.details, as a
+    // RetryInfo entry like { "@type": ".../RetryInfo", "retryDelay": "34s" }.
+    const retryInfo = Array.isArray(errObj.details)
+      ? errObj.details.find(d => typeof d.retryDelay === "string")
+      : null;
+    if (retryInfo) {
+      const parsedDelay = parseFloat(retryInfo.retryDelay); // e.g. "34s" -> 34
+      if (!isNaN(parsedDelay)) err.retryDelaySeconds = parsedDelay;
+    }
     throw err;
   }
 
@@ -1019,10 +1029,15 @@ Text: ${chunkText}`;
     try {
       raw = await callGeminiAI(prompt, { maxTokens: 6000, temperature: 0.2 });
     } catch (err) {
-      if (err.isRateLimit && attempt < 4) {
-        // Gemini's quota error usually includes a retryDelay in seconds.
-        const waitMatch = err.message.match(/retryDelay["\s:]+(\d+(\.\d+)?)/i) || err.message.match(/(\d+(\.\d+)?)\s*s(?:econds)?/i);
-        const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 500 : (attempt + 1) * 4000;
+      if (err.isRateLimit && attempt < 5) {
+        // Use Google's precise retryDelay when we have it; otherwise fall
+        // back to a growing guess. Add a little random jitter so multiple
+        // chunks retrying at once don't all slam the API at the exact same
+        // moment (which just trips the limit again).
+        const jitter = Math.random() * 800;
+        const waitMs = err.retryDelaySeconds
+          ? Math.ceil(err.retryDelaySeconds * 1000) + 500 + jitter
+          : (attempt + 1) * 5000 + jitter;
         await sleepMs(waitMs);
         return analyseChunk(chunkText, attempt + 1);
       }
@@ -1050,7 +1065,7 @@ Text: ${chunkText}`;
     const chunks = splitIntoDayChunks(text);
     const allResults = [];
     const failedChunks = [];
-    const CONCURRENCY = 3; // run a few days at once instead of fully sequential
+    const CONCURRENCY = 2; // run a couple days at once — free-tier RPM is tight (often ~10-15/min)
     let completed = 0;
     try {
       for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY) {
@@ -1071,7 +1086,7 @@ Text: ${chunkText}`;
         });
         // Small gap between batches (not between every single request) so we
         // don't trip Gemini's per-minute rate limit.
-        if (batchStart + CONCURRENCY < chunks.length) await sleepMs(800);
+        if (batchStart + CONCURRENCY < chunks.length) await sleepMs(1200);
       }
       if (allResults.length === 0) {
         throw new Error(failedChunks.length ? failedChunks.join("; ") : "No exercises were found in the pasted text.");
