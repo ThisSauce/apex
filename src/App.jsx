@@ -941,13 +941,21 @@ Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": numb
 Group by day if multiple days. If no days mentioned use "Imported Workout".
 Text: ${text}`;
     try {
-      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 1200, temperature: 0.2 }) });
+      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 4000, temperature: 0.2 }) });
       const data = await resp.json();
       if (data.error) throw new Error(data.error.message);
       const raw = data.choices?.[0]?.message?.content || "[]";
       const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
       const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
-      const result = JSON.parse(cleaned.slice(s, e + 1));
+      if (s === -1 || e === -1 || e <= s) {
+        throw new Error("The AI didn't return recognizable JSON. Try shortening the pasted text or simplifying the format.");
+      }
+      let result;
+      try {
+        result = JSON.parse(cleaned.slice(s, e + 1));
+      } catch {
+        throw new Error("The response was incomplete or malformed. Try pasting a shorter section, or simplify the formatting.");
+      }
       setParsed(result);
       setTab("preview");
     } catch (err) { setParseError(`Could not analyse: ${err.message}`); }
