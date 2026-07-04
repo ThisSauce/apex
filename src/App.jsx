@@ -917,6 +917,57 @@ function ProgramExRowWrapper({ ex, showDivider, onEdit, onDeleteExercise, onTogg
 }
 
 /* ════════════════════════════════
+   GEMINI AI HELPER
+   Shared by the workout importer and the progress insight report.
+   - Local dev: calls Google's Gemini API directly (needs VITE_GEMINI_API_KEY).
+   - Production: calls our own /api/gemini serverless function, which should
+     hold the real GEMINI_API_KEY server-side and proxy the request.
+   Returns the model's raw text response, or throws an Error. Rate-limit
+   errors are marked with err.isRateLimit = true so callers can retry.
+════════════════════════════════ */
+const GEMINI_MODEL = "gemini-flash-latest";
+
+async function callGeminiAI(prompt, { maxTokens = 2000, temperature = 0.3 } = {}) {
+  const isLocal = import.meta.env.DEV;
+  const url = isLocal
+    ? `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
+    : "/api/gemini";
+  const headers = { "Content-Type": "application/json" };
+  if (isLocal) headers["x-goog-api-key"] = import.meta.env.VITE_GEMINI_API_KEY;
+
+  // Local dev talks to Gemini's native shape. In production, /api/gemini can
+  // either proxy that same shape through, or accept this simplified
+  // { prompt, maxTokens, temperature } body and return { text } — both are
+  // handled below.
+  const body = isLocal
+    ? { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature } }
+    : { prompt, maxTokens, temperature };
+
+  const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const data = await resp.json();
+
+  if (data.error) {
+    const msg = typeof data.error === "string" ? data.error : (data.error.message || "Gemini request failed");
+    const isRateLimit = resp.status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(msg);
+    const err = new Error(msg);
+    err.isRateLimit = isRateLimit;
+    throw err;
+  }
+
+  const text = data.text
+    ?? data.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("")
+    ?? "";
+
+  if (!text) {
+    const err = new Error("Gemini returned an empty response");
+    throw err;
+  }
+  return text;
+}
+
+function sleepMs(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ════════════════════════════════
    IMPORT WORKOUT PAGE
 ════════════════════════════════ */
 function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
@@ -952,34 +1003,26 @@ function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
     return sawHeader ? chunks.filter(c => c.trim().length > 0) : [fullText];
   }
 
-  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
   async function analyseChunk(chunkText, attempt = 0) {
-    const isLocal = import.meta.env.DEV;
-    const url = isLocal ? "https://api.groq.com/openai/v1/chat/completions" : "/api/groq";
-    const headers = { "Content-Type": "application/json" };
-    if (isLocal) headers["Authorization"] = `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`;
     const prompt = `You are a fitness expert. Extract workout data from the text below and return ONLY a valid JSON array with no explanation or markdown.
 Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": number, "reps": string, "rest": number, "note": string }] }
 Group by day if multiple days appear in this text. If no day name is mentioned use "Imported Workout".
 Keep "note" short (a few words) or omit it — don't restate the sets/reps there.
 Text: ${chunkText}`;
-    const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 4000, temperature: 0.2 }) });
-    const data = await resp.json();
-    if (data.error) {
-      const msg = data.error.message || "Request failed";
-      const isRateLimit = resp.status === 429 || /rate limit/i.test(msg);
-      if (isRateLimit && attempt < 4) {
-        // Groq tells us how long to wait, e.g. "...try again in 12.9s...".
-        const waitMatch = msg.match(/try again in ([\d.]+)s/i);
+    let raw;
+    try {
+      raw = await callGeminiAI(prompt, { maxTokens: 4000, temperature: 0.2 });
+    } catch (err) {
+      if (err.isRateLimit && attempt < 4) {
+        // Gemini's quota error usually includes a retryDelay in seconds.
+        const waitMatch = err.message.match(/retryDelay["\s:]+(\d+(\.\d+)?)/i) || err.message.match(/(\d+(\.\d+)?)\s*s(?:econds)?/i);
         const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 500 : (attempt + 1) * 4000;
-        await sleep(waitMs);
+        await sleepMs(waitMs);
         return analyseChunk(chunkText, attempt + 1);
       }
-      if (isRateLimit) throw new Error("hit Groq's rate limit — wait a minute and try again with fewer days at once");
-      throw new Error(msg);
+      if (err.isRateLimit) throw new Error("hit Gemini's rate limit — wait a minute and try again with fewer days at once");
+      throw err;
     }
-    const raw = data.choices?.[0]?.message?.content || "[]";
     const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
     const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
     if (s === -1 || e === -1 || e <= s) {
@@ -1004,8 +1047,8 @@ Text: ${chunkText}`;
     try {
       for (let i = 0; i < chunks.length; i++) {
         if (chunks.length > 1) setParseProgress({ current: i + 1, total: chunks.length });
-        // Small gap between requests so we don't trip Groq's per-minute rate limit.
-        if (i > 0) await sleep(1500);
+        // Small gap between requests so we don't trip Gemini's per-minute rate limit.
+        if (i > 0) await sleepMs(1500);
         try {
           const result = await analyseChunk(chunks[i]);
           allResults.push(...result);
@@ -2084,24 +2127,8 @@ The "suggestions" value must be an array of up to 5 objects, each with:
 
 Return ONLY valid JSON, no markdown fences, no extra text.`;
 
-    const isLocal = import.meta.env.DEV;
-    const url = isLocal ? "https://api.groq.com/openai/v1/chat/completions" : "/api/groq";
-    const headers = { "Content-Type": "application/json" };
-    if (isLocal) headers["Authorization"] = `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`;
-
     try {
-      const resp = await fetch(url, {
-        method: "POST", headers,
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 1800,
-          temperature: 0.5,
-        })
-      });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error.message || "Groq error");
-      const raw = data.choices?.[0]?.message?.content || "";
+      const raw = await callGeminiAI(prompt, { maxTokens: 1800, temperature: 0.5 });
       // Robust JSON extraction — handle literal newlines inside string values
       let parsed = { report: "", suggestions: [] };
       const jsonStart = raw.indexOf('{');
