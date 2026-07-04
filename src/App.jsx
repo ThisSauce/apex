@@ -923,43 +923,97 @@ function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
   const [tab, setTab] = useState("paste");
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState(null); // { current, total }
   const [parsed, setParsed] = useState(null);
   const [parseError, setParseError] = useState(null);
   const [targetDayId, setTargetDayId] = useState(days[0]?.id || null);
 
-  async function handleAnalyse() {
-    if (!text.trim()) return;
-    setParsing(true);
-    setParseError(null);
-    setParsed(null);
+  // Split pasted text into per-day chunks so each AI call stays small
+  // enough to avoid truncated/incomplete JSON responses.
+  function splitIntoDayChunks(fullText) {
+    const DAY_WORDS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+    const lines = fullText.split("\n");
+    const chunks = [];
+    let current = [];
+    let sawHeader = false;
+    for (const line of lines) {
+      const upper = line.trim().toUpperCase();
+      const isHeader = DAY_WORDS.some(w => upper.startsWith(w));
+      if (isHeader) {
+        if (current.length) chunks.push(current.join("\n"));
+        current = [line];
+        sawHeader = true;
+      } else {
+        current.push(line);
+      }
+    }
+    if (current.length) chunks.push(current.join("\n"));
+    // If we never found day headers, treat the whole paste as one chunk.
+    return sawHeader ? chunks.filter(c => c.trim().length > 0) : [fullText];
+  }
+
+  async function analyseChunk(chunkText) {
     const isLocal = import.meta.env.DEV;
     const url = isLocal ? "https://api.groq.com/openai/v1/chat/completions" : "/api/groq";
     const headers = { "Content-Type": "application/json" };
     if (isLocal) headers["Authorization"] = `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`;
     const prompt = `You are a fitness expert. Extract workout data from the text below and return ONLY a valid JSON array with no explanation or markdown.
 Each element: { "dayLabel": string, "exercises": [{ "name": string, "sets": number, "reps": string, "rest": number, "note": string }] }
-Group by day if multiple days. If no days mentioned use "Imported Workout".
-Text: ${text}`;
+Group by day if multiple days appear in this text. If no day name is mentioned use "Imported Workout".
+Keep "note" short (a few words) or omit it — don't restate the sets/reps there.
+Text: ${chunkText}`;
+    const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 4000, temperature: 0.2 }) });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message);
+    const raw = data.choices?.[0]?.message?.content || "[]";
+    const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
+    const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
+    if (s === -1 || e === -1 || e <= s) {
+      throw new Error("didn't return recognizable JSON");
+    }
     try {
-      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: 4000, temperature: 0.2 }) });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error.message);
-      const raw = data.choices?.[0]?.message?.content || "[]";
-      const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
-      const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
-      if (s === -1 || e === -1 || e <= s) {
-        throw new Error("The AI didn't return recognizable JSON. Try shortening the pasted text or simplifying the format.");
+      return JSON.parse(cleaned.slice(s, e + 1));
+    } catch {
+      throw new Error("returned an incomplete response");
+    }
+  }
+
+  async function handleAnalyse() {
+    if (!text.trim()) return;
+    setParsing(true);
+    setParseError(null);
+    setParsed(null);
+    setParseProgress(null);
+    const chunks = splitIntoDayChunks(text);
+    const allResults = [];
+    const failedChunks = [];
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunks.length > 1) setParseProgress({ current: i + 1, total: chunks.length });
+        try {
+          const result = await analyseChunk(chunks[i]);
+          allResults.push(...result);
+        } catch (chunkErr) {
+          // Keep going on other days even if one chunk fails, and report
+          // which day(s) failed at the end rather than losing everything.
+          const firstLine = chunks[i].split("\n")[0].trim().slice(0, 40) || `section ${i + 1}`;
+          failedChunks.push(`${firstLine} (${chunkErr.message})`);
+        }
       }
-      let result;
-      try {
-        result = JSON.parse(cleaned.slice(s, e + 1));
-      } catch {
-        throw new Error("The response was incomplete or malformed. Try pasting a shorter section, or simplify the formatting.");
+      if (allResults.length === 0) {
+        throw new Error(failedChunks.length ? failedChunks.join("; ") : "No exercises were found in the pasted text.");
       }
-      setParsed(result);
+      setParsed(allResults);
       setTab("preview");
-    } catch (err) { setParseError(`Could not analyse: ${err.message}`); }
-    finally { setParsing(false); }
+      if (failedChunks.length) {
+        showToast(`Some sections couldn't be read: ${failedChunks.join(", ")}`, "error");
+      }
+    } catch (err) {
+      setParseError(`Could not analyse: ${err.message}`);
+    } finally {
+      setParsing(false);
+      setParseProgress(null);
+    }
   }
 
   function handleAdd() {
@@ -1006,7 +1060,7 @@ Text: ${text}`;
             <div style={{ display: "flex", gap: 8 }}>
               <button style={s.btnCancel} onClick={onClose}>Cancel</button>
               <button style={{ ...s.btnSave, opacity: (!text.trim() || parsing) ? 0.5 : 1 }} onClick={handleAnalyse} disabled={!text.trim() || parsing}>
-                {parsing ? "Analysing..." : "Analyse ›"}
+                {parsing ? (parseProgress ? `Analysing day ${parseProgress.current}/${parseProgress.total}...` : "Analysing...") : "Analyse ›"}
               </button>
             </div>
           </div>
