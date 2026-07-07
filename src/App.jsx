@@ -434,6 +434,13 @@ export default function App() {
     }));
   }
 
+  function clearDayExercises(dayId) {
+    updateProgram(prog => ({
+      ...prog,
+      days: prog.days.map(d => d.id !== dayId ? d : { ...d, exercises: [] })
+    }));
+  }
+
   function toggleSupersetInDay(dayId, exId) {
     updateProgram(prog => ({
       ...prog,
@@ -535,6 +542,7 @@ export default function App() {
           onAddExercise={addExerciseToDay}
           onUpdateExercise={updateExerciseInDay}
           onDeleteExercise={deleteExerciseFromDay}
+          onClearDay={clearDayExercises}
           onToggleSuperset={toggleSupersetInDay}
           onRenameDay={renameDayLabel}
           onReorder={reorderExercisesInDay}
@@ -692,7 +700,7 @@ function HomePage({ program, onProgram, onExercise, onProgress }) {
    PROGRAM PAGE
 ════════════════════════════════ */
 function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExercise, onUpdateExercise,
-  onDeleteExercise, onToggleSuperset, onRenameDay, onReorder, onAddToSuperset, showToast }) {
+  onDeleteExercise, onClearDay, onToggleSuperset, onRenameDay, onReorder, onAddToSuperset, showToast }) {
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [showForm, setShowForm] = useState(false);
@@ -776,7 +784,6 @@ function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExe
     setDragIdx(null); setDragOverIdx(null);
   }
 
-  const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7];
   const DAY_COUNT_MAX = 14; // supports multi-week rotations, not just a calendar week
 
   return (
@@ -791,17 +798,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExe
 
       <div style={s.progSection}>
         <div style={s.progSectionLabel}>Number of days</div>
-        <div style={s.dayCountRow}>
-          {DAY_OPTIONS.map(n => (
-            <button key={n}
-              style={{ ...s.dayCountBtn, ...(days.length === n ? s.dayCountBtnOn : {}) }}
-              onClick={() => { onSetDayCount(n); setActiveIdx(Math.min(activeIdx, n - 1)); }}>
-              {n}
-            </button>
-          ))}
-        </div>
-        {/* Stepper for rotations longer than a calendar week (e.g. an 8-day split) */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button style={s.dayCountBtn}
             onClick={() => { const n = Math.max(1, days.length - 1); onSetDayCount(n); setActiveIdx(Math.min(activeIdx, n - 1)); }}>
             −
@@ -818,7 +815,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExe
 
       {days.length === 0 && (
         <div style={{ ...s.empty, paddingTop: 40 }}>
-          <div style={s.emptyText}>Select how many days per week above</div>
+          <div style={s.emptyText}>Use the stepper above to set your number of days</div>
         </div>
       )}
 
@@ -849,6 +846,16 @@ function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExe
               <div style={s.dayLabelStatic}>
                 <span style={s.dayLabelText}>{activeDay?.label}</span>
                 <button style={s.labelEditBtn} onClick={() => { setLabelVal(activeDay.label); setEditingLabel(true); }}>Rename</button>
+                {activeDay?.exercises.length > 0 && (
+                  <button
+                    style={{ ...s.labelEditBtn, color: RED, marginLeft: "auto" }}
+                    onClick={() => {
+                      const ok = window.confirm(`Delete all ${activeDay.exercises.length} exercise${activeDay.exercises.length === 1 ? "" : "s"} in "${activeDay.label}"? This can't be undone.`);
+                      if (ok) onClearDay(activeDay.id);
+                    }}>
+                    Delete all
+                  </button>
+                )}
               </div>
             )}
           </div>
