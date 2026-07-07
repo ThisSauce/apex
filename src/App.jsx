@@ -1371,6 +1371,40 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
   const [workoutActive, setWorkoutActive] = useState(false); // true once first set is marked done
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [pendingDayId, setPendingDayId] = useState(null); // day user tried to switch to
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false); // top-right X confirm
+
+  function discardLoggedSets() {
+    exercises.forEach(e => {
+      if (e.loggedSets && e.loggedSets.length > 0) onUpdateExercise(e.id, { loggedSets: [] });
+    });
+  }
+
+  function handleDaySwitch(dayId) {
+    if (dayId === day.id) return;
+    if (workoutActive) {
+      // Locked onto this day while a workout is active — confirm before leaving.
+      setPendingDayId(dayId);
+      setShowDiscardConfirm(true);
+      return;
+    }
+    onSelectDay(dayId);
+  }
+
+  function handleDiscard() {
+    discardLoggedSets();
+    setWorkoutActive(false);
+    setShowDiscardConfirm(false);
+    if (pendingDayId) {
+      onSelectDay(pendingDayId);
+      setPendingDayId(null);
+    }
+  }
+
+  function handleCancelWorkout() {
+    discardLoggedSets();
+    setWorkoutActive(false);
+    setShowCancelConfirm(false);
+  }
   const noteRef = useRef(null);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
@@ -1466,7 +1500,11 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
       <div style={s.header}>
         <button style={s.backBtn} onClick={onBack}>‹</button>
         <span style={s.headerTitle}>{day.label}</span>
-        <span style={{ width: 32 }} />
+        {workoutActive ? (
+          <button style={ex_s.cancelXBtn} onClick={() => setShowCancelConfirm(true)} aria-label="Cancel workout" title="Cancel workout">✕</button>
+        ) : (
+          <span style={{ width: 32 }} />
+        )}
       </div>
 
       <div style={s.tabBar}>
@@ -1489,7 +1527,7 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
         </div>
       )}
 
-      {/* Discard confirm modal */}
+      {/* Discard confirm modal (switching days mid-workout) */}
       {showDiscardConfirm && (
         <div style={ex_s.noteOverlay}>
           <div style={ex_s.noteModal}>
@@ -1498,6 +1536,20 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
             <div style={ex_s.noteActions}>
               <button style={ex_s.noteSkipBtn} onClick={() => { setShowDiscardConfirm(false); setPendingDayId(null); }}>Stay</button>
               <button style={{ ...ex_s.noteSaveBtn, background: "#7a1a1a" }} onClick={handleDiscard}>Discard & Switch</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel confirm modal (top-right red X) */}
+      {showCancelConfirm && (
+        <div style={ex_s.noteOverlay}>
+          <div style={ex_s.noteModal}>
+            <div style={ex_s.noteTitle}>Cancel Workout?</div>
+            <div style={ex_s.noteSub}>Are you sure? This will discard everything logged this session.</div>
+            <div style={ex_s.noteActions}>
+              <button style={ex_s.noteSkipBtn} onClick={() => setShowCancelConfirm(false)}>No</button>
+              <button style={{ ...ex_s.noteSaveBtn, background: "#7a1a1a" }} onClick={handleCancelWorkout}>Yes, Cancel</button>
             </div>
           </div>
         </div>
@@ -1559,8 +1611,11 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
       </div>
 
       <div style={s.logBar}>
-        <button style={{ ...s.logBtn, ...(logged ? s.logBtnSuccess : {}) }} onClick={handleLog} disabled={showNotes}>
-          {logged ? "✓ Workout Logged!" : "Log This Workout"}
+        <button
+          style={{ ...s.logBtn, ...(logged ? s.logBtnSuccess : {}) }}
+          onClick={workoutActive ? handleLog : () => setWorkoutActive(true)}
+          disabled={showNotes}>
+          {logged ? "✓ Workout Logged!" : (workoutActive ? "Log This Workout" : "Start Workout")}
         </button>
       </div>
 
@@ -1611,6 +1666,9 @@ const ex_s = {
   activeBannerDot: { width: 8, height: 8, borderRadius: "50%", background: RED, flexShrink: 0, animation: "livePulse 1s infinite" },
   activeBannerText: { fontSize: 12, color: RED, fontWeight: 600, flex: 1 },
   activeBannerFinish: { background: RED, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit" },
+
+  // Cancel workout (top-right red X, shown once a workout is locked/active)
+  cancelXBtn: { width: 32, height: 32, borderRadius: "50%", background: "rgba(232,48,42,0.12)", border: `1px solid rgba(232,48,42,0.4)`, color: RED, fontSize: 15, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" },
 };
 
 function LogExRow({ ex, last, showDivider, onUpdate, onSetActive }) {
