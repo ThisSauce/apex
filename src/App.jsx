@@ -364,6 +364,51 @@ export default function App() {
     });
   }
 
+  // Used by the workout importer: grows the program's day list (if the
+  // pasted program has more days than currently exist) AND places every
+  // parsed exercise into the right day, all in one atomic state update.
+  // Doing this in two separate steps (add days, then add exercises) would
+  // race — the newly created day IDs wouldn't exist yet when we tried to
+  // add exercises into them.
+  function importParsedProgram(parsedGroups, singleTargetDayId) {
+    const DAY_COUNT_SAFETY_MAX = 14;
+    updateProgram(prog => {
+      let newDays = [...prog.days];
+      const neededDays = Math.min(parsedGroups.length, DAY_COUNT_SAFETY_MAX);
+      if (neededDays > newDays.length) {
+        const extra = Array.from({ length: neededDays - newDays.length }, (_, i) => ({
+          id: uid(), label: `Day ${newDays.length + i + 1}`, exercises: []
+        }));
+        newDays = [...newDays, ...extra];
+      }
+      parsedGroups.forEach((group, groupIdx) => {
+        const dayLabelWords = (group.dayLabel || "").toLowerCase().split(/\s+/).filter(w => w.length > 2);
+        const matchedDay = newDays.find(d => {
+          const dl = d.label.toLowerCase();
+          return dayLabelWords.some(w => dl.includes(w));
+        });
+        let targetDay = matchedDay;
+        if (!targetDay) {
+          targetDay = (parsedGroups.length === 1 && singleTargetDayId)
+            ? (newDays.find(d => d.id === singleTargetDayId) || newDays[0])
+            : (newDays[groupIdx] || newDays[newDays.length - 1]);
+        }
+        if (!targetDay) return;
+        const labelToId = {};
+        const newExercises = group.exercises.map(e => {
+          let supersetId = null;
+          if (e.supersetLabel) {
+            if (!labelToId[e.supersetLabel]) labelToId[e.supersetLabel] = uid();
+            supersetId = labelToId[e.supersetLabel];
+          }
+          return { id: Math.random().toString(36).slice(2, 9), name: e.name, sets: String(e.sets || 3), reps: String(e.reps || "8"), weight: "", unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "", useTempo: false, tempo: "", rest: e.rest ? String(e.rest) : "", note: e.note || "", supersetId };
+        });
+        newDays = newDays.map(d => d.id === targetDay.id ? { ...d, exercises: [...d.exercises, ...newExercises] } : d);
+      });
+      return { ...prog, days: newDays };
+    });
+  }
+
   function addExerciseToDay(dayId, ex) {
     updateProgram(prog => ({
       ...prog,
@@ -486,6 +531,7 @@ export default function App() {
           program={program}
           onBack={() => setPage("home")}
           onSetDayCount={setDayCount}
+          onImportProgram={importParsedProgram}
           onAddExercise={addExerciseToDay}
           onUpdateExercise={updateExerciseInDay}
           onDeleteExercise={deleteExerciseFromDay}
@@ -645,7 +691,7 @@ function HomePage({ program, onProgram, onExercise, onProgress }) {
 /* ════════════════════════════════
    PROGRAM PAGE
 ════════════════════════════════ */
-function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateExercise,
+function ProgramPage({ program, onBack, onSetDayCount, onImportProgram, onAddExercise, onUpdateExercise,
   onDeleteExercise, onToggleSuperset, onRenameDay, onReorder, onAddToSuperset, showToast }) {
 
   const [activeIdx, setActiveIdx] = useState(0);
@@ -731,6 +777,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
   }
 
   const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7];
+  const DAY_COUNT_MAX = 14; // supports multi-week rotations, not just a calendar week
 
   return (
     <div style={s.root}>
@@ -743,7 +790,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
       </div>
 
       <div style={s.progSection}>
-        <div style={s.progSectionLabel}>Days per week</div>
+        <div style={s.progSectionLabel}>Number of days</div>
         <div style={s.dayCountRow}>
           {DAY_OPTIONS.map(n => (
             <button key={n}
@@ -752,6 +799,20 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
               {n}
             </button>
           ))}
+        </div>
+        {/* Stepper for rotations longer than a calendar week (e.g. an 8-day split) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+          <button style={s.dayCountBtn}
+            onClick={() => { const n = Math.max(1, days.length - 1); onSetDayCount(n); setActiveIdx(Math.min(activeIdx, n - 1)); }}>
+            −
+          </button>
+          <span style={{ fontSize: 14, color: TEXT, fontWeight: 600, minWidth: 72, textAlign: "center" }}>
+            {days.length} day{days.length === 1 ? "" : "s"}
+          </span>
+          <button style={s.dayCountBtn}
+            onClick={() => { const n = Math.min(DAY_COUNT_MAX, days.length + 1); onSetDayCount(n); }}>
+            +
+          </button>
         </div>
       </div>
 
@@ -901,7 +962,7 @@ function ProgramPage({ program, onBack, onSetDayCount, onAddExercise, onUpdateEx
         <ImportWorkoutPage
           days={days}
           onClose={() => setShowImport(false)}
-          onAddExercise={onAddExercise}
+          onImportProgram={onImportProgram}
           showToast={showToast}
         />
       )}
@@ -980,11 +1041,12 @@ function sleepMs(ms) { return new Promise(r => setTimeout(r, ms)); }
 /* ════════════════════════════════
    IMPORT WORKOUT PAGE
 ════════════════════════════════ */
-function ImportWorkoutPage({ days, onClose, onAddExercise, showToast }) {
+function ImportWorkoutPage({ days, onClose, onImportProgram, showToast }) {
   const [tab, setTab] = useState("paste");
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
   const [parseProgress, setParseProgress] = useState(null); // { current, total }
+  const [retryStatus, setRetryStatus] = useState(null); // live text shown during rate-limit backoff
   const [parsed, setParsed] = useState(null);
   const [parseError, setParseError] = useState(null);
   const [targetDayId, setTargetDayId] = useState(days[0]?.id || null);
@@ -1025,23 +1087,30 @@ Rules for filling these in:
 
 Group by day if multiple days appear in this text. If no day name is mentioned use "Imported Workout".
 Text: ${chunkText}`;
+    const MAX_AUTO_WAIT_SECONDS = 20; // don't silently wait longer than this per retry
     let raw;
     try {
       raw = await callGeminiAI(prompt, { maxTokens: 6000, temperature: 0.2 });
     } catch (err) {
-      if (err.isRateLimit && attempt < 5) {
-        // Use Google's precise retryDelay when we have it; otherwise fall
-        // back to a growing guess. Add a little random jitter so multiple
-        // chunks retrying at once don't all slam the API at the exact same
-        // moment (which just trips the limit again).
-        const jitter = Math.random() * 800;
-        const waitMs = err.retryDelaySeconds
-          ? Math.ceil(err.retryDelaySeconds * 1000) + 500 + jitter
-          : (attempt + 1) * 5000 + jitter;
-        await sleepMs(waitMs);
-        return analyseChunk(chunkText, attempt + 1);
+      if (err.isRateLimit) {
+        // If Google is asking for a long cooldown, your quota is likely
+        // substantially used up — waiting it out automatically would just
+        // hang the UI with no feedback. Fail fast with the real number
+        // instead of silently sleeping for a long time.
+        if (err.retryDelaySeconds && err.retryDelaySeconds > MAX_AUTO_WAIT_SECONDS) {
+          throw new Error(`rate-limited — Gemini asked for a ${Math.round(err.retryDelaySeconds)}s cooldown. Try again shortly, or check your quota at aistudio.google.com`);
+        }
+        if (attempt < 4) {
+          const jitter = Math.random() * 800;
+          const waitSeconds = err.retryDelaySeconds || (attempt + 1) * 5;
+          const waitMs = Math.ceil(waitSeconds * 1000) + 500 + jitter;
+          setRetryStatus(`rate limited, retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/4)...`);
+          await sleepMs(waitMs);
+          setRetryStatus(null);
+          return analyseChunk(chunkText, attempt + 1);
+        }
+        throw new Error("hit Gemini's rate limit repeatedly — wait a minute and try again with fewer days at once");
       }
-      if (err.isRateLimit) throw new Error("hit Gemini's rate limit — wait a minute and try again with fewer days at once");
       throw err;
     }
     const cleaned = raw.replace(/\`\`\`json|\`\`\`/g, "").trim();
@@ -1062,6 +1131,7 @@ Text: ${chunkText}`;
     setParseError(null);
     setParsed(null);
     setParseProgress(null);
+    setRetryStatus(null);
     const chunks = splitIntoDayChunks(text);
     const allResults = [];
     const failedChunks = [];
@@ -1101,30 +1171,22 @@ Text: ${chunkText}`;
     } finally {
       setParsing(false);
       setParseProgress(null);
+      setRetryStatus(null);
     }
   }
 
   function handleAdd() {
     if (!parsed) return;
-    let added = 0;
-    parsed.forEach(group => {
-      const matchedDay = days.find(d => d.label.toLowerCase().includes((group.dayLabel || "").toLowerCase().split(" ")[0]));
-      const targetDay = matchedDay || days.find(d => d.id === targetDayId) || days[0];
-      if (!targetDay) return;
-      // Exercises sharing the same supersetLabel (e.g. "Superset 2A") get
-      // linked with the same supersetId, which is how the app groups them.
-      const labelToId = {};
-      group.exercises.forEach(e => {
-        let supersetId = null;
-        if (e.supersetLabel) {
-          if (!labelToId[e.supersetLabel]) labelToId[e.supersetLabel] = uid();
-          supersetId = labelToId[e.supersetLabel];
-        }
-        onAddExercise(targetDay.id, { id: Math.random().toString(36).slice(2,9), name: e.name, sets: String(e.sets||3), reps: String(e.reps||"8"), weight: "", unit: "kg", useRir: false, rir: "", useIntensity: false, intensity: "", useTempo: false, tempo: "", rest: e.rest ? String(e.rest) : "", note: e.note||"", supersetId });
-        added++;
-      });
-    });
-    showToast(`Added ${added} exercises to your program`, "success");
+    const DAY_COUNT_SAFETY_MAX = 14;
+    const neededDays = Math.min(parsed.length, DAY_COUNT_SAFETY_MAX);
+    const willAddDays = neededDays > days.length ? neededDays - days.length : 0;
+    const added = parsed.reduce((sum, g) => sum + g.exercises.length, 0);
+    onImportProgram(parsed, targetDayId);
+    if (willAddDays > 0) {
+      showToast(`Added ${added} exercises across ${parsed.length} days (created ${willAddDays} new day${willAddDays === 1 ? "" : "s"} to fit)`, "success");
+    } else {
+      showToast(`Added ${added} exercises to your program`, "success");
+    }
     onClose();
   }
 
@@ -1153,6 +1215,7 @@ Text: ${chunkText}`;
               <div style={ip.hintText}>Sets, reps, rest times, exercise names, day names, tempos, notes — paste any format and Apex figures it out.</div>
             </div>
             {parseError && <div style={{ fontSize: 13, color: "#ff6b6b" }}>{parseError}</div>}
+            {retryStatus && <div style={{ fontSize: 12, color: "#a78bfa" }}>{retryStatus}</div>}
             <div style={{ display: "flex", gap: 8 }}>
               <button style={s.btnCancel} onClick={onClose}>Cancel</button>
               <button style={{ ...s.btnSave, opacity: (!text.trim() || parsing) ? 0.5 : 1 }} onClick={handleAnalyse} disabled={!text.trim() || parsing}>
