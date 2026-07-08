@@ -1463,18 +1463,22 @@ function ExercisePage({ day, allDays, lastLogged, onBack, onSelectDay, onUpdateE
 
   function handleSaveNote() {
     onLog(sessionNote);
+    if (onSaveLastDate) onSaveLastDate(day.id, today); // remember sets were logged today, so they aren't wiped on return
     setShowNotes(false);
     setSessionNote("");
     setLogged(true);
+    setWorkoutActive(false); // unlock — done logging, free to switch days again
 
     setTimeout(() => setLogged(false), 2200);
   }
 
   function handleSkipNote() {
     onLog("");
+    if (onSaveLastDate) onSaveLastDate(day.id, today); // remember sets were logged today, so they aren't wiped on return
     setShowNotes(false);
     setSessionNote("");
     setLogged(true);
+    setWorkoutActive(false); // unlock — done logging, free to switch days again
 
     setTimeout(() => setLogged(false), 2200);
   }
