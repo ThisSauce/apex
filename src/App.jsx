@@ -528,6 +528,10 @@ export default function App() {
     return true;
   }
 
+  function deleteLogEntry(logId) {
+    setData(prev => ({ ...prev, logs: prev.logs.filter(l => l.id !== logId) }));
+  }
+
   // FIX: Guard against missing day
   const activeDay = program.days.find(d => d.id === activeDayId) || null;
 
@@ -598,7 +602,7 @@ export default function App() {
   if (page === "progress") {
     return (
       <>
-        <ProgressPage logs={data.logs} program={data.program} onBack={() => setPage("home")} onAddExercise={addExerciseToDay} onDeleteExercise={deleteExerciseFromDay} onUpdateExercise={updateExerciseInDay} />
+        <ProgressPage logs={data.logs} program={data.program} onBack={() => setPage("home")} onAddExercise={addExerciseToDay} onDeleteExercise={deleteExerciseFromDay} onUpdateExercise={updateExerciseInDay} onDeleteLog={deleteLogEntry} />
         <Toast toast={toast} />
       </>
     );
@@ -2127,7 +2131,7 @@ function keywordClassify(name) {
   return null;
 }
 
-function ProgressPage({ logs, program, onBack, onAddExercise, onDeleteExercise, onUpdateExercise }) {
+function ProgressPage({ logs, program, onBack, onAddExercise, onDeleteExercise, onUpdateExercise, onDeleteLog }) {
   const [tab, setTab] = useState("dashboard");
   const [muscleTab, setMuscleTab] = useState("all");
   const [filterDayId, setFilterDayId] = useState(null);
@@ -2568,7 +2572,7 @@ Return ONLY valid JSON, no markdown fences, no extra text.`;
         )}
 
         {/* ── HISTORY TAB ── */}
-        {tab === "history" && <HistoryTab logs={logs} />}
+        {tab === "history" && <HistoryTab logs={logs} onDeleteLog={onDeleteLog} />}
 
         {/* ── DASHBOARD TAB ── */}
         {tab === "dashboard" && !hasWeekOfData && (
@@ -2999,7 +3003,7 @@ function InsightReport({ text }) {
 
 
 
-function HistoryTab({ logs }) {
+function HistoryTab({ logs, onDeleteLog }) {
   const reversed = [...logs].reverse();
   function vol(exList) {
     return exList.reduce((s, e) => s + (parseInt(e.sets) || 0) * (parseInt(e.reps) || 0) * (parseFloat(e.weight) || 0), 0);
@@ -3013,6 +3017,11 @@ function HistoryTab({ logs }) {
     </div>
   );
 
+  function handleDelete(log) {
+    const ok = window.confirm(`Delete this logged workout ("${log.dayLabel}" on ${formatDate(log.date)})? This can't be undone.`);
+    if (ok && onDeleteLog) onDeleteLog(log.id);
+  }
+
   return (
     <>
       {reversed.map(log => {
@@ -3020,17 +3029,26 @@ function HistoryTab({ logs }) {
         return (
           <div key={log.id} style={s.logCard}>
             <div style={s.logHeader}>
-              <div>
-                <div style={s.logDay}>{log.dayLabel}</div>
-                <div style={s.logDate}>{formatDate(log.date)}</div>
-                {log.sessionNote && <div style={s.logSessionNote}>"{log.sessionNote}"</div>}
-              </div>
-              {v > 0 && (
-                <div style={s.logVolBox}>
-                  <div style={s.logVolNum}>{v.toLocaleString()}</div>
-                  <div style={s.logVolLabel}>kg volume</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flex: 1, gap: 10 }}>
+                <div>
+                  <div style={s.logDay}>{log.dayLabel}</div>
+                  <div style={s.logDate}>{formatDate(log.date)}</div>
+                  {log.sessionNote && <div style={s.logSessionNote}>"{log.sessionNote}"</div>}
                 </div>
-              )}
+                {v > 0 && (
+                  <div style={s.logVolBox}>
+                    <div style={s.logVolNum}>{v.toLocaleString()}</div>
+                    <div style={s.logVolLabel}>kg volume</div>
+                  </div>
+                )}
+              </div>
+              <button
+                style={hist_s.deleteXBtn}
+                onClick={() => handleDelete(log)}
+                aria-label="Delete this logged workout"
+                title="Delete this logged workout">
+                ✕
+              </button>
             </div>
             {v > 0 && (
               <div style={s.volBarWrap}>
@@ -3055,6 +3073,10 @@ function HistoryTab({ logs }) {
     </>
   );
 }
+
+const hist_s = {
+  deleteXBtn: { background: "none", border: "none", color: DIM, fontSize: 14, cursor: "pointer", padding: "2px 0 0 10px", lineHeight: 1, flexShrink: 0 },
+};
 
 /* ── Charts ── */
 function OneRMLineChart({ data, weeks, colors }) {
